@@ -1,7 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.dto.UserUpdateDTO;
-import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
 import com.be_ai_learning_platform.entity.ClassEntity;
 import com.be_ai_learning_platform.entity.LearningModule;
 import com.be_ai_learning_platform.entity.User;
@@ -15,7 +14,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
@@ -26,45 +24,39 @@ public class UserServiceImpl implements UserService {
     private final ClassRepository classRepository;
     private final ModuleRepository moduleRepository;
 
-    /**
-     * Hoàn tất hồ sơ sau khi Google login lần đầu
-     * CREATED → WAITING_APPROVAL
-     */
+    // ======================= UPDATE PROFILE (ACTIVE USER) =======================
     @Override
-    public void completeProfile(CompleteProfileRequest request) {
+    public User updateProfile(Long id, UserUpdateDTO updateDTO) {
 
-        // 1️⃣ Tìm user theo email (đã được tạo khi Google login)
-        User user = userRepository.findByEmail(request.getEmail())
+        User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // 2️⃣ Chỉ cho phép khi user ở trạng thái CREATED
-        if (user.getStatus() != UserStatus.CREATED) {
-            throw new RuntimeException("User is not allowed to complete profile");
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new RuntimeException("Only ACTIVE user can update profile");
         }
 
-        // 3️⃣ Lấy class
-        ClassEntity clazz = classRepository.findById(request.getClassId())
-                .orElseThrow(() -> new RuntimeException("Class not found"));
+        user.setFullName(updateDTO.getFullName());
+        user.setAvatarUrl(updateDTO.getAvatarUrl());
+        user.setEmail(updateDTO.getEmail());
 
-        // 4️⃣ Lấy module
-        LearningModule module = moduleRepository.findById(request.getModuleId())
-                .orElseThrow(() -> new RuntimeException("Module not found"));
+        if (updateDTO.getClassId() != null) {
+            ClassEntity clazz = classRepository.findById(updateDTO.getClassId())
+                    .orElseThrow(() -> new RuntimeException("Class not found"));
+            user.setClassName(clazz);
+        }
 
-        // 5️⃣ Update thông tin
-        user.setFullName(request.getFullName());
-        user.setClassName(clazz);
-        user.setLearningModule(module);
+        if (updateDTO.getLearningModuleId() != null) {
+            LearningModule module = moduleRepository.findById(updateDTO.getLearningModuleId())
+                    .orElseThrow(() -> new RuntimeException("Module not found"));
+            user.setLearningModule(module);
+        }
 
-        // 🔥 QUAN TRỌNG: chuyển sang WAITING_APPROVAL
-        user.setStatus(UserStatus.WAITING_APPROVAL);
+        user.setUpdatedAt(LocalDateTime.now());
 
-        userRepository.save(user);
+        return userRepository.save(user);
     }
 
-    /**
-     * Admin duyệt user
-     * WAITING_APPROVAL → ACTIVE
-     */
+    // ======================= ADMIN APPROVE =======================
     @Override
     public void approveUser(Long userId) {
 
@@ -78,43 +70,4 @@ public class UserServiceImpl implements UserService {
         user.setStatus(UserStatus.ACTIVE);
         userRepository.save(user);
     }
-
-    @Override
-    @Transactional
-    public User updateProfile(Long id, UserUpdateDTO updateDTO) {
-        // Giải quyết lỗi orElseThrow bằng cách dùng Supplier tường minh
-        User user = userRepository.findById(id)
-                .orElseThrow(new Supplier<RuntimeException>() {
-                    @Override
-                    public RuntimeException get() {
-                        return new RuntimeException("Không tìm thấy học viên với ID: " + id);
-                    }
-                });
-
-        // 1. Cập nhật các trường thông tin cơ bản
-        user.setFullName(updateDTO.getFullName());
-        user.setAvatarUrl(updateDTO.getAvatarUrl());
-        user.setEmail(updateDTO.getEmail());
-
-        // 2. Cập nhật Lớp học (Sửa lỗi classId gạch đỏ: dùng .getClassId())
-        if (updateDTO.getClassId() != null) {
-            ClassEntity classEntity = classRepository.findById(updateDTO.getClassId())
-                    .orElseThrow(() -> new RuntimeException("Lớp học không tồn tại"));
-            user.setClassName(classEntity);
-        }
-
-        // 3. Cập nhật Module (Dùng full path để tránh xung đột với java.lang.Module)
-        if (updateDTO.getLearningModuleId() != null) {
-            LearningModule moduleEntity = moduleRepository.findById(updateDTO.getLearningModuleId())
-                    .orElseThrow(() -> new RuntimeException("Module không tồn tại"));
-
-            user.setLearningModule(moduleEntity);
-        }
-
-        // 4. Ghi nhận thời gian cập nhật
-        user.setUpdatedAt(LocalDateTime.now());
-
-        return userRepository.save(user);
-    }
-
 }

@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.controller;
 
+import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
 import com.be_ai_learning_platform.dto.request.GoogleLoginRequest;
 import com.be_ai_learning_platform.dto.request.LoginRequest;
 import com.be_ai_learning_platform.dto.request.RegisterRequest;
@@ -42,6 +43,13 @@ public class AuthController {
     public ResponseEntity<AuthResponse> loginWithGoogle(@RequestBody GoogleLoginRequest request) throws Exception {
         User user = googleAuthService.authenticate(request.getIdToken());
         return buildAuthResponse(user);
+    }
+    @PostMapping("/complete-profile")
+    public ResponseEntity<?> completeProfile(
+            @RequestBody CompleteProfileRequest request
+    ) {
+        authService.completeProfile(request);
+        return ResponseEntity.ok("Profile completed. Waiting for approval");
     }
 
     private ResponseEntity<AuthResponse> buildAuthResponse(User user) {
