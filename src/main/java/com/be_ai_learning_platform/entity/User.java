@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Entity
 @Data
@@ -31,7 +32,7 @@ public class User {
     @Column(nullable = false, unique = true, length = 150)
     private String email;
 
-    @Column(name = "password_hash", nullable = false)
+    @Column(name = "password_hash")
     private String passwordHash;
 
     private String fullName;
@@ -54,13 +55,15 @@ public class User {
 
     @ManyToOne
     @JoinColumn(name = "current_module_id")
-    private Module learningModule;
+    private LearningModule learningModule;
+
+    // 🔥 QUAN HỆ ROLE (BẮT BUỘC)
+    @OneToMany(mappedBy = "user", fetch = FetchType.EAGER)
+    private List<UserRole> userRoles;
 
     private LocalDateTime createdAt = LocalDateTime.now();
     private LocalDateTime updatedAt;
     private LocalDateTime lastLoginAt;
 
     private Boolean isDeleted = false;
-
-    // getter / setter
 }

@@ -1,12 +1,16 @@
 package com.be_ai_learning_platform.entity;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
 @Entity
 @Table(
         name = "user_role",
         uniqueConstraints = @UniqueConstraint(columnNames = {"user_id", "role_id"})
 )
+@Getter
+@Setter
 public class UserRole {
 
     @Id
