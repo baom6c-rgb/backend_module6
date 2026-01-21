@@ -1,10 +1,14 @@
 package com.be_ai_learning_platform.entity;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
 
 @Entity
 @Table(name = "module")
-public class Module {
+@Getter
+@Setter
+public class LearningModule  {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
