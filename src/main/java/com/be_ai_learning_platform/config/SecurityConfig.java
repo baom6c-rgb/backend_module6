@@ -43,8 +43,8 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/classes/**",
-                                "/api/users/complete-profile",
                                 "/api/modules/**",
+                                "/admin/approve",
                                 "/error"
                         ).permitAll()
 
