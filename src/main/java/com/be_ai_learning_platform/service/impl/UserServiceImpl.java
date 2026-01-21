@@ -48,7 +48,7 @@ public class UserServiceImpl implements UserService {
 
         // 5️⃣ Update thông tin
         user.setFullName(request.getFullName());
-        user.setClazz(clazz);
+        user.setClassName(clazz);
         user.setLearningModule(module);
 
         // 🔥 QUAN TRỌNG: chuyển sang WAITING_APPROVAL

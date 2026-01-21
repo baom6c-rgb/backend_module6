@@ -47,7 +47,7 @@ public class AuthServiceImpl implements AuthService {
         user.setFullName(request.getFullName());
 
         // 🔥 SET ĐẦY ĐỦ
-        user.setClazz(clazz);
+        user.setClassName(clazz);
         user.setLearningModule(module);
 
         user.setRegisterMethod(RegisterMethod.FORM);
