@@ -26,7 +26,6 @@ public class UserController {
         User updatedUser = userService.updateProfile(id, updateDTO);
         return ResponseEntity.ok(updatedUser);
     }
-}
     @PostMapping("/complete-profile")
     public ResponseEntity<Void> completeProfile(
             @RequestBody CompleteProfileRequest request
@@ -34,12 +33,12 @@ public class UserController {
         userService.completeProfile(request);
         return ResponseEntity.ok().build();
     }
-
 // phần này chỉ để test về sau xoá
     @GetMapping("/me")
     public ResponseEntity<?> me(Authentication authentication) {
         return ResponseEntity.ok(authentication.getName());
     }
 }
+
 
 
