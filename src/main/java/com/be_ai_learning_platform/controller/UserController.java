@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.controller;
 
+import com.be_ai_learning_platform.dto.request.SelectClassRequest;
 import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
 import com.be_ai_learning_platform.dto.response.AuthResponse;
 import com.be_ai_learning_platform.service.UserService;
@@ -23,6 +24,11 @@ public class UserController {
         return ResponseEntity.ok().build();
     }
 
+// phần này chỉ để test về sau xoá
+    @GetMapping("/me")
+    public ResponseEntity<?> me(Authentication authentication) {
+        return ResponseEntity.ok(authentication.getName());
+    }
 }
 
 

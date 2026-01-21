@@ -22,7 +22,6 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-
         http
                 // ✅ CORS – KHÔNG DEPRECATED
                 .cors(cors -> {})
@@ -41,7 +40,6 @@ public class SecurityConfig {
                         // ⭐ PREFLIGHT
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // 🔓 PUBLIC
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/classes/**",
@@ -50,13 +48,16 @@ public class SecurityConfig {
                                 "/error"
                         ).permitAll()
 
+                        // 🔐 ADMIN
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+
+                        // 🔐 STUDENT (US2)
+                        // nếu đặt route học tập theo /api/student/**
+                        .requestMatchers("/api/student/**").hasRole("STUDENT")
                         // 🔐 USER (login rồi)
                         .requestMatchers(
                                 "/api/users/me"
                         ).authenticated()
-
-                        // 🔐 ADMIN
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
                         .anyRequest().authenticated()
                 )
