@@ -40,7 +40,7 @@ public class AdminServiceImpl implements AdminService {
         oldUser.setFullName(user.getFullName());
         oldUser.setEmail(user.getEmail());
         oldUser.setClassName(user.getClassName());
-        oldUser.setCurrentModule(user.getCurrentModule());
+        oldUser.setLearningModule(user.getLearningModule());
         oldUser.setStatus(user.getStatus()); // ⭐ cho phép đổi status
 
         return adminRepository.save(oldUser);
