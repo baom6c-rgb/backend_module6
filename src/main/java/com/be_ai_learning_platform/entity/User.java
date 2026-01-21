@@ -54,7 +54,7 @@ public class User {
 
     @ManyToOne
     @JoinColumn(name = "current_module_id")
-    private Module currentModule;
+    private Module learningModule;
 
     private LocalDateTime createdAt = LocalDateTime.now();
     private LocalDateTime updatedAt;
