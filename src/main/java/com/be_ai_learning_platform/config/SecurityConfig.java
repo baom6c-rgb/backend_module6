@@ -22,18 +22,14 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-
         http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
                 .authorizeHttpRequests(auth -> auth
-
-                        // ⭐ ALLOW PREFLIGHT
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
-                        // 🔓 PUBLIC
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/users/select-class",
@@ -41,9 +37,13 @@ public class SecurityConfig {
                                 "/api/modules/**",
                                 "/error"
                         ).permitAll()
+
                         // 🔐 ADMIN
-                        .requestMatchers("/api/admin/**")
-                        .hasRole("ADMIN")
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+
+                        // 🔐 STUDENT (US2)
+                        // nếu đặt route học tập theo /api/student/**
+                        .requestMatchers("/api/student/**").hasRole("STUDENT")
 
                         .anyRequest().authenticated()
                 )

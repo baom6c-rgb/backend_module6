@@ -73,19 +73,14 @@ public class AuthServiceImpl implements AuthService {
     // ======================= LOGIN (FORM) =======================
     @Override
     public User login(LoginRequest request) {
-
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException("Invalid email or password"));
 
-        // ❌ Không cho login form nếu là Google account
         if (user.getLoginProvider() != LoginProvider.FORM) {
             throw new RuntimeException("Please login using Google");
         }
 
-        if (!passwordEncoder.matches(
-                request.getPassword(),
-                user.getPasswordHash()
-        )) {
+        if (!passwordEncoder.matches(request.getPassword(), user.getPasswordHash())) {
             throw new RuntimeException("Invalid email or password");
         }
 
@@ -95,7 +90,7 @@ public class AuthServiceImpl implements AuthService {
 
         user.setLastLoginAt(LocalDateTime.now());
         userRepository.save(user);
-
         return user;
     }
+
 }
