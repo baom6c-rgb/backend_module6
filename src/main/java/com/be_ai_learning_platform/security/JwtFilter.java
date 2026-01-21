@@ -43,8 +43,8 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // ⭐ BỎ QUA AUTH + SELECT CLASS
-        if (path.startsWith("/api/auth/") || path.equals("/api/users/select-class")) {
+        // ⭐ BỎ QUA AUTH
+        if (path.startsWith("/api/auth/") || path.equals("/api/users/complete-profile")) {
             chain.doFilter(request, response);
             return;
         }
@@ -57,7 +57,8 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String token = header.substring(7);
 
-        if (!jwtUtil.validateToken(token)) {
+        // ⭐ CHẶN Bearer null
+        if (token.isBlank() || token.equals("null")) {
             chain.doFilter(request, response);
             return;
         }
@@ -76,11 +77,17 @@ public class JwtFilter extends OncePerRequestFilter {
 
         // ✅ Fix incompatible types: cast về GrantedAuthority + Collectors.toList()
         List<GrantedAuthority> authorities = roles.stream()
-                .map(r -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + r))
+                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
                 .collect(Collectors.toList());
 
-        var auth = new UsernamePasswordAuthenticationToken(email, null, authorities);
-        SecurityContextHolder.getContext().setAuthentication(auth);
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(
+                        email,
+                        null,
+                        authorities
+                );
+
+        SecurityContextHolder.getContext().setAuthentication(authentication);
 
         chain.doFilter(request, response);
     }

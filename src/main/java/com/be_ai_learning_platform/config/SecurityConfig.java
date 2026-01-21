@@ -23,17 +23,27 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
+                // ✅ CORS – KHÔNG DEPRECATED
+                .cors(cors -> {})
+
+                // ❌ CSRF OFF (API)
                 .csrf(csrf -> csrf.disable())
+
+                // ❌ STATELESS
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
+
+                // 🔐 AUTH RULES
                 .authorizeHttpRequests(auth -> auth
+
+                        // ⭐ PREFLIGHT
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                         .requestMatchers(
                                 "/api/auth/**",
-                                "/api/users/select-class",
                                 "/api/classes/**",
+                                "/api/users/complete-profile",
                                 "/api/modules/**",
                                 "/error"
                         ).permitAll()
@@ -44,9 +54,15 @@ public class SecurityConfig {
                         // 🔐 STUDENT (US2)
                         // nếu đặt route học tập theo /api/student/**
                         .requestMatchers("/api/student/**").hasRole("STUDENT")
+                        // 🔐 USER (login rồi)
+                        .requestMatchers(
+                                "/api/users/me"
+                        ).authenticated()
 
                         .anyRequest().authenticated()
                 )
+
+                // 🔐 JWT FILTER
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

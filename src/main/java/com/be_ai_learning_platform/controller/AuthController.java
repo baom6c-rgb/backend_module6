@@ -50,7 +50,15 @@ public class AuthController {
         }
 
         if (user.getStatus() != UserStatus.ACTIVE) {
-            return ResponseEntity.ok(new AuthResponse(null, null, user.getStatus().name()));
+            return ResponseEntity.ok(
+                    new AuthResponse(
+                            null,
+                            null,
+                            user.getStatus().name(),
+                            user.getEmail()
+                    )
+            );
+
         }
 
         List<String> roles = user.getUserRoles().stream()
@@ -59,6 +67,14 @@ public class AuthController {
 
         String token = jwtUtil.generateToken(user.getEmail(), roles);
 
-        return ResponseEntity.ok(new AuthResponse(token, roles, user.getStatus().name()));
+        return ResponseEntity.ok(
+                new AuthResponse(
+                        token,
+                        roles,
+                        user.getStatus().name(),
+                        user.getEmail()
+                )
+        );
+
     }
 }
