@@ -4,21 +4,25 @@ import com.be_ai_learning_platform.entity.enums.LoginProvider;
 import com.be_ai_learning_platform.entity.enums.RegisterMethod;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
 import jakarta.persistence.*;
-import lombok.Getter;
-import lombok.Setter;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Entity
+@Data
+@AllArgsConstructor
+@NoArgsConstructor
 @Table(
         name = "user",
         uniqueConstraints = {
                 @UniqueConstraint(columnNames = {"login_provider", "provider_id"})
         }
 )
-@Getter
-@Setter
+
+
 public class User {
 
     @Id
@@ -47,7 +51,7 @@ public class User {
 
     @ManyToOne
     @JoinColumn(name = "class_id")
-    private ClassEntity clazz;
+    private ClassEntity className;
 
     @ManyToOne
     @JoinColumn(name = "current_module_id")
