@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
+import com.be_ai_learning_platform.dto.UserUpdateDTO;
 import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
 import com.be_ai_learning_platform.entity.ClassEntity;
 import com.be_ai_learning_platform.entity.LearningModule;
@@ -73,5 +74,10 @@ public class UserServiceImpl implements UserService {
 
         user.setStatus(UserStatus.ACTIVE);
         userRepository.save(user);
+    }
+
+    @Override
+    public User updateProfile(Long id, UserUpdateDTO updateDTO) {
+        return null;
     }
 }
