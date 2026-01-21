@@ -37,11 +37,8 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // ⭐ BỎ QUA AUTH + SELECT CLASS
-        if (
-                path.startsWith("/api/auth/")
-                        || path.equals("/api/users/select-class")
-        ) {
+        // ⭐ BỎ QUA AUTH
+        if (path.startsWith("/api/auth/") || path.equals("/api/users/complete-profile")) {
             chain.doFilter(request, response);
             return;
         }
@@ -55,7 +52,8 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String token = authHeader.substring(7);
 
-        if (!jwtUtil.validateToken(token)) {
+        // ⭐ CHẶN Bearer null
+        if (token.isBlank() || token.equals("null")) {
             chain.doFilter(request, response);
             return;
         }
@@ -64,9 +62,9 @@ public class JwtFilter extends OncePerRequestFilter {
         List<String> roles = jwtUtil.extractRoles(token);
 
         List<GrantedAuthority> authorities = roles.stream()
-                .map(role -> (GrantedAuthority)
-                        new SimpleGrantedAuthority("ROLE_" + role))
+                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
                 .collect(Collectors.toList());
+
         UsernamePasswordAuthenticationToken authentication =
                 new UsernamePasswordAuthenticationToken(
                         email,
@@ -74,8 +72,7 @@ public class JwtFilter extends OncePerRequestFilter {
                         authorities
                 );
 
-        SecurityContextHolder.getContext()
-                .setAuthentication(authentication);
+        SecurityContextHolder.getContext().setAuthentication(authentication);
 
         chain.doFilter(request, response);
     }

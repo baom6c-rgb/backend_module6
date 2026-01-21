@@ -24,29 +24,44 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
         http
+                // ✅ CORS – KHÔNG DEPRECATED
+                .cors(cors -> {})
+
+                // ❌ CSRF OFF (API)
                 .csrf(csrf -> csrf.disable())
+
+                // ❌ STATELESS
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
+
+                // 🔐 AUTH RULES
                 .authorizeHttpRequests(auth -> auth
 
-                        // ⭐ ALLOW PREFLIGHT
+                        // ⭐ PREFLIGHT
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                         // 🔓 PUBLIC
                         .requestMatchers(
                                 "/api/auth/**",
-                                "/api/users/select-class",
                                 "/api/classes/**",
+                                "/api/users/complete-profile",
                                 "/api/modules/**",
                                 "/error"
                         ).permitAll()
+
+                        // 🔐 USER (login rồi)
+                        .requestMatchers(
+                                "/api/users/me"
+                        ).authenticated()
+
                         // 🔐 ADMIN
-                        .requestMatchers("/api/admin/**")
-                        .hasRole("ADMIN")
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
                         .anyRequest().authenticated()
                 )
+
+                // 🔐 JWT FILTER
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

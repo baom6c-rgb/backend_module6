@@ -72,9 +72,11 @@ public class AuthController {
                     new AuthResponse(
                             null,
                             null,
-                            user.getStatus().name()
+                            user.getStatus().name(),
+                            user.getEmail()
                     )
             );
+
         }
 
         // ✅ ACTIVE → LẤY ROLE → SINH JWT
@@ -92,8 +94,10 @@ public class AuthController {
                 new AuthResponse(
                         token,
                         roles,
-                        user.getStatus().name()
+                        user.getStatus().name(),
+                        user.getEmail()
                 )
         );
+
     }
 }

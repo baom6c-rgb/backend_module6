@@ -51,7 +51,7 @@ public class User {
 
     @ManyToOne
     @JoinColumn(name = "current_module_id")
-    private LearningModule currentModule;
+    private LearningModule learningModule;
 
     // 🔥 QUAN HỆ ROLE (BẮT BUỘC)
     @OneToMany(mappedBy = "user", fetch = FetchType.EAGER)

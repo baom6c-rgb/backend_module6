@@ -2,17 +2,11 @@ package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.dto.request.LoginRequest;
 import com.be_ai_learning_platform.dto.request.RegisterRequest;
-import com.be_ai_learning_platform.entity.ClassEntity;
-import com.be_ai_learning_platform.entity.Role;
-import com.be_ai_learning_platform.entity.User;
-import com.be_ai_learning_platform.entity.UserRole;
+import com.be_ai_learning_platform.entity.*;
 import com.be_ai_learning_platform.entity.enums.LoginProvider;
 import com.be_ai_learning_platform.entity.enums.RegisterMethod;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
-import com.be_ai_learning_platform.repository.ClassRepository;
-import com.be_ai_learning_platform.repository.RoleRepository;
-import com.be_ai_learning_platform.repository.UserRepository;
-import com.be_ai_learning_platform.repository.UserRoleRepository;
+import com.be_ai_learning_platform.repository.*;
 import com.be_ai_learning_platform.service.AuthService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -31,6 +25,7 @@ public class AuthServiceImpl implements AuthService {
     private final RoleRepository roleRepository;
     private final UserRoleRepository userRoleRepository;
     private final PasswordEncoder passwordEncoder;
+    private final ModuleRepository moduleRepository;
 
     // ======================= REGISTER (FORM) =======================
     @Override
@@ -43,12 +38,17 @@ public class AuthServiceImpl implements AuthService {
         ClassEntity clazz = classRepository.findById(request.getClassId())
                 .orElseThrow(() -> new RuntimeException("Class not found"));
 
-        // --------- TẠO USER ---------
+        LearningModule module = moduleRepository.findById(request.getModuleId())
+                .orElseThrow(() -> new RuntimeException("Module not found"));
+
         User user = new User();
         user.setEmail(request.getEmail());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
         user.setFullName(request.getFullName());
+
+        // 🔥 SET ĐẦY ĐỦ
         user.setClazz(clazz);
+        user.setLearningModule(module);
 
         user.setRegisterMethod(RegisterMethod.FORM);
         user.setLoginProvider(LoginProvider.FORM);
@@ -59,7 +59,6 @@ public class AuthServiceImpl implements AuthService {
 
         userRepository.save(user);
 
-        // --------- GÁN ROLE STUDENT ---------
         Role studentRole = roleRepository.findByName("STUDENT")
                 .orElseThrow(() -> new RuntimeException("Role STUDENT not found"));
 
@@ -69,6 +68,7 @@ public class AuthServiceImpl implements AuthService {
 
         userRoleRepository.save(userRole);
     }
+
 
     // ======================= LOGIN (FORM) =======================
     @Override
