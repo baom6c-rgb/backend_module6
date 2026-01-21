@@ -1,4 +1,4 @@
-package com.be_ai_learning_platform.service.Impl;
+package com.be_ai_learning_platform.service.impl;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
 import com.be_ai_learning_platform.repository.AdminRepository;
