@@ -15,9 +15,6 @@ public class AdminUpdateUserRequest {
     @NotBlank(message = "Email is required")
     private String email;
 
-    @NotNull(message = "RoleId is required")
-    private Long roleId;
-
     @NotNull(message = "ClassId is required")
     private Long classId;
 
