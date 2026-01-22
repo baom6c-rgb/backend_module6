@@ -6,13 +6,15 @@ import lombok.Data;
 
 @Data
 @Builder
-public class AdminResponse {
-    private Long id;
+public class StudentProfileResponse {
     private String email;
     private String fullName;
+    private String avatarUrl;
+    private String phoneNumber;
+    private String address;
+
     private UserStatus status;
 
-    // optional hiển thị nhanh
     private Long classId;
     private String className;
 

@@ -44,6 +44,7 @@ public class SecurityConfig {
                                 "/api/auth/**",
                                 "/api/classes/**",
                                 "/api/users/complete-profile",
+                                "/api/users/status",
                                 "/api/modules/**",
                                 "/error"
                         ).permitAll()
@@ -56,7 +57,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/student/**").hasRole("STUDENT")
                         // 🔐 USER (login rồi)
                         .requestMatchers(
-                                "/api/users/me"
+                                "/api/users/me"    //phần này để test, sau xoá
                         ).authenticated()
 
                         .anyRequest().authenticated()

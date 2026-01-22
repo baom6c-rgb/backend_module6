@@ -2,6 +2,9 @@ package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.dto.UserUpdateDTO;
 import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
+import com.be_ai_learning_platform.dto.request.StudentUpdateProfileRequest;
+import com.be_ai_learning_platform.dto.response.StudentProfileResponse;
+import com.be_ai_learning_platform.dto.response.UserStatusResponse;
 import com.be_ai_learning_platform.entity.ClassEntity;
 import com.be_ai_learning_platform.entity.LearningModule;
 import com.be_ai_learning_platform.entity.User;
@@ -26,48 +29,113 @@ public class UserServiceImpl implements UserService {
     private final ClassRepository classRepository;
     private final ModuleRepository moduleRepository;
 
-    /**
-     * Hoàn tất hồ sơ sau khi Google login lần đầu
-     * CREATED → WAITING_APPROVAL
-     */
+    // ====================== US2: polling status ======================
+    @Override
+    @Transactional(readOnly = true)
+    public UserStatusResponse getStatusByEmail(String email) {
+        return userRepository.findByEmail(email)
+                .map(u -> new UserStatusResponse(u.getEmail(), u.getStatus()))
+                .orElseGet(() -> new UserStatusResponse(email, null));
+    }
+
+    // ====================== US3: GET my profile ======================
+    @Override
+    @Transactional(readOnly = true)
+    public StudentProfileResponse getMyProfileByEmail(String email) {
+        User u = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        Long classId = (u.getClassName() != null) ? u.getClassName().getId() : null;
+        String className = (u.getClassName() != null) ? u.getClassName().getClassName() : null;
+
+        Long moduleId = (u.getLearningModule() != null) ? u.getLearningModule().getId() : null;
+        String moduleName = (u.getLearningModule() != null) ? u.getLearningModule().getModuleName() : null;
+
+        return StudentProfileResponse.builder()
+                .email(u.getEmail())
+                .fullName(u.getFullName())
+                .avatarUrl(u.getAvatarUrl())
+                .phoneNumber(u.getPhoneNumber())
+                .address(u.getAddress())
+                .status(u.getStatus())
+                .classId(classId)
+                .className(className)
+                .moduleId(moduleId)
+                .moduleName(moduleName)
+                .build();
+    }
+
+    // ====================== US3: UPDATE by email (token) ======================
+    @Override
+    public void updateStudentProfileByEmail(String email, StudentUpdateProfileRequest request) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new RuntimeException("User is not active");
+        }
+
+        // normalize nhẹ
+        String fullName = request.getFullName() != null ? request.getFullName().trim() : null;
+        String avatarUrl = request.getAvatarUrl() != null ? request.getAvatarUrl().trim() : null;
+        String phone = request.getPhoneNumber() != null ? request.getPhoneNumber().trim() : null;
+        String address = request.getAddress() != null ? request.getAddress().trim() : null;
+
+        user.setFullName(fullName);
+        user.setAvatarUrl(avatarUrl);
+        user.setPhoneNumber(phone);
+        user.setAddress(address);
+        user.setUpdatedAt(LocalDateTime.now());
+
+        userRepository.save(user);
+    }
+
+    // ====================== (optional) UPDATE by userId ======================
+    @Override
+    public void updateStudentProfile(Long userId, StudentUpdateProfileRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new RuntimeException("User is not active");
+        }
+
+        user.setFullName(request.getFullName());
+        user.setAvatarUrl(request.getAvatarUrl());
+        user.setPhoneNumber(request.getPhoneNumber());
+        user.setAddress(request.getAddress());
+        user.setUpdatedAt(LocalDateTime.now());
+
+        userRepository.save(user);
+    }
+
+    // ====================== US2: complete profile (Google) ======================
     @Override
     public void completeProfile(CompleteProfileRequest request) {
-
-        // 1️⃣ Tìm user theo email (đã được tạo khi Google login)
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
-        // 2️⃣ Chỉ cho phép khi user ở trạng thái CREATED
         if (user.getStatus() != UserStatus.CREATED) {
             throw new RuntimeException("User is not allowed to complete profile");
         }
 
-        // 3️⃣ Lấy class
         ClassEntity clazz = classRepository.findById(request.getClassId())
                 .orElseThrow(() -> new RuntimeException("Class not found"));
 
-        // 4️⃣ Lấy module
         LearningModule module = moduleRepository.findById(request.getModuleId())
                 .orElseThrow(() -> new RuntimeException("Module not found"));
 
-        // 5️⃣ Update thông tin
         user.setFullName(request.getFullName());
         user.setClassName(clazz);
         user.setLearningModule(module);
-
-        // 🔥 QUAN TRỌNG: chuyển sang WAITING_APPROVAL
         user.setStatus(UserStatus.WAITING_APPROVAL);
 
         userRepository.save(user);
     }
 
-    /**
-     * Admin duyệt user
-     * WAITING_APPROVAL → ACTIVE
-     */
+    // ====================== legacy / admin ======================
     @Override
     public void approveUser(Long userId) {
-
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -80,9 +148,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
-    @Transactional
     public User updateProfile(Long id, UserUpdateDTO updateDTO) {
-        // Giải quyết lỗi orElseThrow bằng cách dùng Supplier tường minh
         User user = userRepository.findById(id)
                 .orElseThrow(new Supplier<RuntimeException>() {
                     @Override
@@ -91,30 +157,23 @@ public class UserServiceImpl implements UserService {
                     }
                 });
 
-        // 1. Cập nhật các trường thông tin cơ bản
         user.setFullName(updateDTO.getFullName());
         user.setAvatarUrl(updateDTO.getAvatarUrl());
         user.setEmail(updateDTO.getEmail());
 
-        // 2. Cập nhật Lớp học (Sửa lỗi classId gạch đỏ: dùng .getClassId())
         if (updateDTO.getClassId() != null) {
             ClassEntity classEntity = classRepository.findById(updateDTO.getClassId())
                     .orElseThrow(() -> new RuntimeException("Lớp học không tồn tại"));
             user.setClassName(classEntity);
         }
 
-        // 3. Cập nhật Module (Dùng full path để tránh xung đột với java.lang.Module)
         if (updateDTO.getLearningModuleId() != null) {
             LearningModule moduleEntity = moduleRepository.findById(updateDTO.getLearningModuleId())
                     .orElseThrow(() -> new RuntimeException("Module không tồn tại"));
-
             user.setLearningModule(moduleEntity);
         }
 
-        // 4. Ghi nhận thời gian cập nhật
         user.setUpdatedAt(LocalDateTime.now());
-
         return userRepository.save(user);
     }
-
 }
