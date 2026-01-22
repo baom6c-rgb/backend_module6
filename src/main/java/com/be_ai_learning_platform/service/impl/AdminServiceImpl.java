@@ -229,20 +229,6 @@ AdminServiceImpl implements AdminService {
                 .orElseThrow(() -> new RuntimeException("Module not found"));
         user.setLearningModule(module);
 
-        // 5) update role (avoid duplicate)
-        Role role = roleRepository.findById(request.getRoleId())
-                .orElseThrow(() -> new RuntimeException("Role not found"));
-
-        boolean alreadyHasThatRole = userRoleRepository.existsByUser_IdAndRole_Id(userId, request.getRoleId());
-        if (!alreadyHasThatRole) {
-            userRoleRepository.deleteAllByUser_Id(userId);
-
-            UserRole ur = new UserRole();
-            ur.setUser(user);
-            ur.setRole(role);
-            userRoleRepository.save(ur);
-        }
-
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 

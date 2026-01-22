@@ -45,6 +45,17 @@ public class AdminController {
         adminService.approve(id);
         return ResponseEntity.ok().build();
     }
+    // Từ chối user
+    @PostMapping("/approvals/{id}/reject")
+    public ResponseEntity<Void> reject(@PathVariable Long id) {
+        adminService.reject(id);
+        return ResponseEntity.ok().build();
+    }
+
+    @GetMapping("/students/active")
+    public ResponseEntity<List<AdminResponse>> activeStudents() {
+        return ResponseEntity.ok(adminService.getActiveStudents());
+    }
 
     // Khóa user
     @PostMapping("/students/{id}/block")
