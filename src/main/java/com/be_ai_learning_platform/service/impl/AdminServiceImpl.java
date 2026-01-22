@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
+import com.be_ai_learning_platform.dto.request.AdminAddUserRequest;
 import com.be_ai_learning_platform.dto.request.AdminUpdateUserRequest;
 import com.be_ai_learning_platform.dto.response.AdminResponse;
 import com.be_ai_learning_platform.dto.response.AdminUserDetailResponse;
@@ -9,6 +10,8 @@ import com.be_ai_learning_platform.entity.LearningModule;
 import com.be_ai_learning_platform.entity.Role;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.UserRole;
+import com.be_ai_learning_platform.entity.enums.LoginProvider;
+import com.be_ai_learning_platform.entity.enums.RegisterMethod;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
 import com.be_ai_learning_platform.repository.ClassRepository;
 import com.be_ai_learning_platform.repository.ModuleRepository;
@@ -17,15 +20,6 @@ import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.repository.UserRoleRepository;
 import com.be_ai_learning_platform.service.AdminService;
 import jakarta.persistence.EntityManager;
-import lombok.RequiredArgsConstructor;
-import com.be_ai_learning_platform.dto.request.AdminAddUserRequest;
-import com.be_ai_learning_platform.dto.response.AdminResponse;
-import com.be_ai_learning_platform.entity.*;
-import com.be_ai_learning_platform.entity.enums.LoginProvider;
-import com.be_ai_learning_platform.entity.enums.RegisterMethod;
-import com.be_ai_learning_platform.entity.enums.UserStatus;
-import com.be_ai_learning_platform.repository.*;
-import com.be_ai_learning_platform.service.AdminService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -40,17 +34,72 @@ import java.util.List;
 public class AdminServiceImpl implements AdminService {
 
     private final UserRepository userRepository;
-    private final RoleRepository roleRepository;
-    private final UserRoleRepository userRoleRepository;
     private final ClassRepository classRepository;
     private final ModuleRepository moduleRepository;
+    private final RoleRepository roleRepository;
+    private final UserRoleRepository userRoleRepository;
+    private final PasswordEncoder passwordEncoder;
 
-    // để fix case: PUT trả role cũ nhưng GET đúng (Hibernate 1st-level cache)
+    // Fix case: PUT trả role cũ nhưng GET đúng (Hibernate 1st-level cache)
     private final EntityManager entityManager;
 
-    // ================= Existing (approve/block) =================
+    // =========================================================
+    // US4 - Admin add user + list all users
+    // =========================================================
 
     @Override
+    public AdminResponse addUser(AdminAddUserRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new RuntimeException("Email đã tồn tại!");
+        }
+
+        ClassEntity clazz = classRepository.findById(request.getClassId())
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy lớp"));
+
+        LearningModule module = moduleRepository.findById(request.getModuleId())
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy học phần"));
+
+        Role foundRole = roleRepository.findByName(request.getRoleName())
+                .orElseThrow(() -> new RuntimeException("Quyền " + request.getRoleName() + " không tồn tại"));
+
+        User user = new User();
+        user.setEmail(request.getEmail());
+        user.setFullName(request.getFullName());
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+        user.setClassName(clazz);
+        user.setLearningModule(module);
+
+        user.setLoginProvider(LoginProvider.FORM);
+        user.setRegisterMethod(RegisterMethod.FORM);
+        user.setStatus(UserStatus.ACTIVE);
+        user.setCreatedAt(LocalDateTime.now());
+        user.setIsDeleted(false);
+
+        User savedUser = userRepository.save(user);
+
+        UserRole userRole = new UserRole();
+        userRole.setUser(savedUser);
+        userRole.setRole(foundRole);
+        userRoleRepository.save(userRole);
+
+        return toAdminResponse(savedUser);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<AdminResponse> getAllUsers() {
+        return userRepository.findAll()
+                .stream()
+                .map(this::toAdminResponse)
+                .toList();
+    }
+
+    // =========================================================
+    // Approvals (Pending → Approve/Reject)
+    // =========================================================
+
+    @Override
+    @Transactional(readOnly = true)
     public List<AdminResponse> getPendingApprovals() {
         return userRepository.findByStatus(UserStatus.WAITING_APPROVAL)
                 .stream()
@@ -78,72 +127,50 @@ public class AdminServiceImpl implements AdminService {
             throw new RuntimeException("User is not waiting for approval");
         }
 
+        // reject = đổi trạng thái (KHÔNG delete DB)
         user.setStatus(UserStatus.REJECTED);
         userRepository.save(user);
     }
 
+    // =========================================================
+    // US6 - Students lists + block/unblock
+    // =========================================================
+
     @Override
+    @Transactional(readOnly = true)
     public List<AdminResponse> getActiveStudents() {
+        // chỉ lấy STUDENT ACTIVE (không lẫn ADMIN)
         return userRepository.findByStatusAndRoleName(UserStatus.ACTIVE, "STUDENT")
                 .stream()
-    private final ClassRepository classRepository;
-    private final ModuleRepository moduleRepository;
-    private final RoleRepository roleRepository;
-    private final UserRoleRepository userRoleRepository;
-    private final PasswordEncoder passwordEncoder;
-
-    @Override
-    public AdminResponse addUser(AdminAddUserRequest request) {
-        // 1. Kiểm tra email trùng
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Email đã tồn tại!");
-        }
-
-        // 2. Tìm các thực thể liên quan (Lớp, Học phần, Quyền)
-        ClassEntity clazz = classRepository.findById(request.getClassId())
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy lớp"));
-
-        LearningModule module = moduleRepository.findById(request.getModuleId())
-                .orElseThrow(() -> new RuntimeException("Không tìm thấy học phần"));
-
-        // ĐÂY LÀ CHỖ DỄ LỖI NHẤT: Tìm Role dựa trên roleName gửi từ Request
-        Role foundRole = roleRepository.findByName(request.getRoleName())
-                .orElseThrow(() -> new RuntimeException("Quyền " + request.getRoleName() + " không tồn tại"));
-
-        // 3. Tạo User và set các trường bắt buộc để tránh lỗi SQL [login_provider cannot be null]
-        User user = new User();
-        user.setEmail(request.getEmail());
-        user.setFullName(request.getFullName());
-        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
-        user.setClassName(clazz);
-        user.setLearningModule(module);
-
-        // Set các giá trị mặc định cho login và register
-        user.setLoginProvider(LoginProvider.FORM);
-        user.setRegisterMethod(RegisterMethod.FORM);
-        user.setStatus(UserStatus.ACTIVE);
-        user.setCreatedAt(LocalDateTime.now());
-
-        User savedUser = userRepository.save(user);
-
-        // 4. Gán Role vào bảng trung gian UserRole
-        UserRole userRole = new UserRole();
-        userRole.setUser(savedUser);
-        userRole.setRole(foundRole);
-        userRoleRepository.save(userRole);
-
-        return toAdminResponse(savedUser);
-    }
-
-    @Override
-    public List<AdminResponse> getAllUsers() {
-        return userRepository.findAll().stream()
                 .map(this::toAdminResponse)
                 .toList();
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public List<AdminResponse> getBlockedUsers() {
+        return userRepository.findByStatusAndRoleName(UserStatus.BLOCKED, "STUDENT")
+                .stream()
+                .map(this::toAdminResponse)
+                .toList();
+    }
+
+    /**
+     * Alias để tương thích code cũ nếu có nơi đang gọi block/unblock
+     * (AdminController của mày hiện gọi blockUser/unblockUser)
+     */
+    @Override
     public void block(Long userId) {
+        blockUser(userId);
+    }
+
+    @Override
+    public void unblock(Long userId) {
+        unblockUser(userId);
+    }
+
+    @Override
+    public void blockUser(Long userId) {
         User user = getUser(userId);
 
         if (user.getStatus() != UserStatus.ACTIVE) {
@@ -155,32 +182,20 @@ public class AdminServiceImpl implements AdminService {
     }
 
     @Override
-    public void unblock(Long userId) {
+    public void unblockUser(Long userId) {
         User user = getUser(userId);
 
         if (user.getStatus() != UserStatus.BLOCKED) {
             throw new RuntimeException("Only BLOCKED user can be unblocked");
         }
 
-    public List<AdminResponse> getPendingApprovals() {
-        return userRepository.findByStatus(UserStatus.WAITING_APPROVAL).stream()
-                .map(this::toAdminResponse).toList();
-    }
-
-    @Override
-    public List<AdminResponse> getActiveStudents() {
-        return userRepository.findByStatus(UserStatus.ACTIVE).stream()
-                .map(this::toAdminResponse).toList();
-    }
-
-    @Override
-    public void approve(Long userId) {
-        User user = getUser(userId);
         user.setStatus(UserStatus.ACTIVE);
         userRepository.save(user);
     }
 
-    // ================= US5 =================
+    // =========================================================
+    // US5 - Admin edit user
+    // =========================================================
 
     @Override
     @Transactional(readOnly = true)
@@ -213,7 +228,7 @@ public class AdminServiceImpl implements AdminService {
                 .orElseThrow(() -> new RuntimeException("Module not found"));
         user.setLearningModule(module);
 
-        // 5) update role (avoid duplicate + avoid reinsert when not changed)
+        // 5) update role (avoid duplicate)
         Role role = roleRepository.findById(request.getRoleId())
                 .orElseThrow(() -> new RuntimeException("Role not found"));
 
@@ -230,8 +245,7 @@ public class AdminServiceImpl implements AdminService {
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
 
-        // ===== Fix “PUT vẫn trả role cũ nhưng GET đúng” =====
-        // ép Hibernate sync & clear cache session, rồi fetch lại từ DB thật
+        // fix “PUT trả role cũ”
         entityManager.flush();
         entityManager.clear();
 
@@ -239,7 +253,9 @@ public class AdminServiceImpl implements AdminService {
         return toAdminUserDetailResponse(fresh);
     }
 
-    // ================= Options (dropdown) =================
+    // =========================================================
+    // Options (dropdown)
+    // =========================================================
 
     @Override
     @Transactional(readOnly = true)
@@ -268,7 +284,9 @@ public class AdminServiceImpl implements AdminService {
                 .toList();
     }
 
-    // ================= helpers =================
+    // =========================================================
+    // Helpers
+    // =========================================================
 
     private User getUser(Long id) {
         return userRepository.findById(id)
@@ -276,31 +294,19 @@ public class AdminServiceImpl implements AdminService {
     }
 
     private AdminResponse toAdminResponse(User u) {
-        Long classId = (u.getClassName() != null) ? u.getClassName().getId() : null;
-        String className = (u.getClassName() != null) ? u.getClassName().getClassName() : null;
-
-        Long moduleId = (u.getLearningModule() != null) ? u.getLearningModule().getId() : null;
-        String moduleName = (u.getLearningModule() != null) ? u.getLearningModule().getModuleName() : null;
-
         return AdminResponse.builder()
                 .id(u.getId())
                 .email(u.getEmail())
                 .fullName(u.getFullName())
                 .status(u.getStatus())
-                .classId(classId)
-                .className(className)
-                .moduleId(moduleId)
-                .moduleName(moduleName)
+                .classId(u.getClassName() != null ? u.getClassName().getId() : null)
+                .className(u.getClassName() != null ? u.getClassName().getClassName() : null)
+                .moduleId(u.getLearningModule() != null ? u.getLearningModule().getId() : null)
+                .moduleName(u.getLearningModule() != null ? u.getLearningModule().getModuleName() : null)
                 .build();
     }
 
     private AdminUserDetailResponse toAdminUserDetailResponse(User u) {
-        Long classId = (u.getClassName() != null) ? u.getClassName().getId() : null;
-        String className = (u.getClassName() != null) ? u.getClassName().getClassName() : null;
-
-        Long moduleId = (u.getLearningModule() != null) ? u.getLearningModule().getId() : null;
-        String moduleName = (u.getLearningModule() != null) ? u.getLearningModule().getModuleName() : null;
-
         Long roleId = null;
         String roleName = null;
         if (u.getUserRoles() != null && !u.getUserRoles().isEmpty() && u.getUserRoles().get(0).getRole() != null) {
@@ -316,54 +322,12 @@ public class AdminServiceImpl implements AdminService {
                 .phoneNumber(u.getPhoneNumber())
                 .address(u.getAddress())
                 .status(u.getStatus())
-                .classId(classId)
-                .className(className)
-                .moduleId(moduleId)
-                .moduleName(moduleName)
-                .roleId(roleId)
-                .roleName(roleName)
-                .build();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<AdminResponse> getBlockedUsers() {
-        return userRepository.findByStatusAndRoleName(UserStatus.BLOCKED, "STUDENT")
-                .stream()
-                .map(this::toAdminResponse)
-                .toList();
-    }
-
-    @Override
-    public void blockUser(Long userId) {
-        User user = getUser(userId);
-
-        // chỉ block user đang ACTIVE
-        if (user.getStatus() != UserStatus.ACTIVE) {
-            throw new RuntimeException("Only ACTIVE user can be blocked");
-        }
-
-        user.setStatus(UserStatus.BLOCKED);
-        userRepository.save(user);
-    }
-
-    @Override
-    public void unblockUser(Long userId) {
-        User user = getUser(userId);
-
-        // chỉ unblock user đang BLOCKED
-        if (user.getStatus() != UserStatus.BLOCKED) {
-            throw new RuntimeException("Only BLOCKED user can be unblocked");
-        }
-
-        user.setStatus(UserStatus.ACTIVE);
-        userRepository.save(user);
-    }
-
                 .classId(u.getClassName() != null ? u.getClassName().getId() : null)
                 .className(u.getClassName() != null ? u.getClassName().getClassName() : null)
                 .moduleId(u.getLearningModule() != null ? u.getLearningModule().getId() : null)
                 .moduleName(u.getLearningModule() != null ? u.getLearningModule().getModuleName() : null)
+                .roleId(roleId)
+                .roleName(roleName)
                 .build();
     }
 }
