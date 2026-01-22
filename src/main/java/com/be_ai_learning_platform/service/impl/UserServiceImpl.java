@@ -12,6 +12,7 @@ import com.be_ai_learning_platform.repository.ClassRepository;
 import com.be_ai_learning_platform.repository.ModuleRepository;
 import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.UserService;
+import com.be_ai_learning_platform.service.mail.MailService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -27,6 +28,7 @@ public class UserServiceImpl implements UserService {
     private final UserRepository userRepository;
     private final ClassRepository classRepository;
     private final ModuleRepository moduleRepository;
+    private final MailService mailService;
 
     // ====================== US2: polling status ======================
     @Override
@@ -111,6 +113,7 @@ public class UserServiceImpl implements UserService {
     // ======================= ADMIN APPROVE =======================
     @Override
     public void approveUser(Long userId) {
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -119,8 +122,15 @@ public class UserServiceImpl implements UserService {
         }
 
         user.setStatus(UserStatus.ACTIVE);
+        user.setApproveToken(null); // optional: tránh reuse link
+        user.setUpdatedAt(LocalDateTime.now());
+
         userRepository.save(user);
+
+        // 🔥 GỬI MAIL THÔNG BÁO CHO USER
+        mailService.notifyApprovedSuccess(user);
     }
+
 
     @Override
     public User updateProfile(Long id, UserUpdateDTO updateDTO) {
