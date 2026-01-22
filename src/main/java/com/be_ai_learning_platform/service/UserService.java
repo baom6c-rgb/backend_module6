@@ -11,7 +11,6 @@ import org.springframework.transaction.annotation.Transactional;
 public interface UserService {
 
     // US2
-    void completeProfile(CompleteProfileRequest request);
     UserStatusResponse getStatusByEmail(String email);
 
     // US3 - STUDENT
