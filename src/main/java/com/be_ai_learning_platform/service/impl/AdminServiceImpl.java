@@ -31,7 +31,8 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 @Transactional
-public class AdminServiceImpl implements AdminService {
+public class
+AdminServiceImpl implements AdminService {
 
     private final UserRepository userRepository;
     private final ClassRepository classRepository;
@@ -299,10 +300,23 @@ public class AdminServiceImpl implements AdminService {
                 .email(u.getEmail())
                 .fullName(u.getFullName())
                 .status(u.getStatus())
+
+                // 🔥 BỔ SUNG CHO ADMIN
+                .registerMethod(u.getRegisterMethod())
+                .loginProvider(u.getLoginProvider())
+                .role(
+                        u.getUserRoles() != null && !u.getUserRoles().isEmpty()
+                                ? u.getUserRoles().get(0).getRole().getName()
+                                : null
+                )
+
+                // optional hiển thị nhanh
                 .classId(u.getClassName() != null ? u.getClassName().getId() : null)
                 .className(u.getClassName() != null ? u.getClassName().getClassName() : null)
+
                 .moduleId(u.getLearningModule() != null ? u.getLearningModule().getId() : null)
                 .moduleName(u.getLearningModule() != null ? u.getLearningModule().getModuleName() : null)
+
                 .build();
     }
 
