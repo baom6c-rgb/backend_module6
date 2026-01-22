@@ -43,7 +43,6 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/classes/**",
-                                
                                 "/api/users/status",
                                 "/api/modules/**",
                                 "/admin/approve",

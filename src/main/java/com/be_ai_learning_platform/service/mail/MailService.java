@@ -63,4 +63,35 @@ public class MailService {
 
         mailSender.send(message);
     }
+
+    /**
+     * Gửi mail thông báo tài khoản đã được duyệt
+     */
+    public void notifyApprovedSuccess(User user) {
+
+        if (user == null) {
+            throw new IllegalArgumentException("User is null");
+        }
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new IllegalStateException(
+                    "Không gửi mail khi status = " + user.getStatus()
+            );
+        }
+
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(user.getEmail());
+        message.setSubject("✅ Tài khoản đã được phê duyệt");
+
+        message.setText(
+                "Xin chào " + user.getFullName() + ",\n\n" +
+                        "🎉 Tài khoản của bạn đã được quản trị viên phê duyệt thành công.\n\n" +
+                        "👉 Bạn có thể đăng nhập và bắt đầu học ngay.\n\n" +
+                        "Chúc bạn học tập tốt!\n\n" +
+                        "— AI Learning Platform"
+        );
+
+        mailSender.send(message);
+    }
 }
