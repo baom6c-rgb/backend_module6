@@ -13,6 +13,11 @@ public interface AuthService {
     // Đăng nhập bằng form
     User login(LoginRequest request);
 
+    void logout(String token);
+
     // Hoàn tất hồ sơ sau Google login (CREATED → WAITING_APPROVAL)
     void completeProfile(CompleteProfileRequest request);
+
+    void processForgotPassword(String email);
+    void updatePassword(String token, String newPassword);
 }

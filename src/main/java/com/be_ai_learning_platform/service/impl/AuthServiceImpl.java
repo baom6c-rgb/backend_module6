@@ -92,7 +92,10 @@ public class AuthServiceImpl implements AuthService {
 
         return user;
     }
-
+    @Override
+    public void logout(String token) {
+        System.out.println("User logged out with token: " + token);
+    }
     // ======================= COMPLETE PROFILE (GOOGLE) =======================
     @Override
     public void completeProfile(CompleteProfileRequest request) {
@@ -134,4 +137,41 @@ public class AuthServiceImpl implements AuthService {
 
         userRoleRepository.save(ur);
     }
+    @Override
+    public void processForgotPassword(String email) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("Không tìm thấy email trong hệ thống"));
+
+        // 1. Tạo Reset Token ngẫu nhiên
+        String resetToken = UUID.randomUUID().toString();
+        user.setResetPasswordToken(resetToken);
+        user.setTokenExpiryDate(LocalDateTime.now().plusMinutes(15)); // Hết hạn sau 15 phút
+        userRepository.save(user);
+
+        // 2. Tạo link và gửi mail qua mailService đã inject
+        String resetLink = "http://localhost:5175/reset-password?token=" + resetToken;
+        mailService.sendForgotPasswordMail(user.getEmail(), resetLink);
+    }
+
+    @Override
+    public void updatePassword(String token, String newPassword) {
+        // Tìm user theo token
+        User user = userRepository.findByResetPasswordToken(token)
+                .orElseThrow(() -> new RuntimeException("Mã xác nhận không hợp lệ"));
+
+        // Kiểm tra thời gian hết hạn
+        if (user.getTokenExpiryDate().isBefore(LocalDateTime.now())) {
+            throw new RuntimeException("Mã xác nhận đã hết hạn, vui lòng yêu cầu lại");
+        }
+
+        // Cập nhật mật khẩu mới (phải mã hóa qua passwordEncoder)
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+
+        // Xóa token để không thể dùng lại lần 2
+        user.setResetPasswordToken(null);
+        user.setTokenExpiryDate(null);
+
+        userRepository.save(user);
+    }
+
 }

@@ -47,6 +47,12 @@ public class User {
     @Column(name = "address", length = 255)
     private String address;
 
+    @Column(name = "reset_password_token")
+    private String resetPasswordToken;
+
+    @Column(name = "token_expiry_date")
+    private LocalDateTime tokenExpiryDate;
+
     @Enumerated(EnumType.STRING)
     private RegisterMethod registerMethod;
 

@@ -94,4 +94,20 @@ public class MailService {
 
         mailSender.send(message);
     }
+    public void sendForgotPasswordMail(String email, String resetLink) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail); // Sử dụng giá trị từ @Value đã có
+        message.setTo(email);
+        message.setSubject("🔑 Đặt lại mật khẩu tài khoản AI Learning");
+
+        message.setText(
+                "Bạn nhận được email này vì đã yêu cầu đặt lại mật khẩu.\n\n" +
+                        "👉 Vui lòng click vào link bên dưới để thực hiện thay đổi (link có hiệu lực trong 15 phút):\n" +
+                        resetLink + "\n\n" +
+                        "Nếu bạn không yêu cầu điều này, vui lòng bỏ qua email này.\n\n" +
+                        "— AI Learning Platform"
+        );
+
+        mailSender.send(message);
+    }
 }
