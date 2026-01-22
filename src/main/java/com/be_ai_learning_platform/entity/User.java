@@ -33,6 +33,9 @@ public class User {
     @Column(name = "password_hash")
     private String passwordHash;
 
+    @Column(name = "approve_token", length = 100)
+    private String approveToken;
+
     private String fullName;
     private String avatarUrl;
 

@@ -25,7 +25,9 @@ public interface UserService {
     @Transactional
     void updateStudentProfile(Long userId, StudentUpdateProfileRequest request);
 
-    // legacy/admin (đang có)
-    User updateProfile(Long id, UserUpdateDTO updateDTO);
+    // Admin duyệt user
     void approveUser(Long userId);
+
+    // User ACTIVE cập nhật profile
+    User updateProfile(Long id, UserUpdateDTO updateDTO);
 }

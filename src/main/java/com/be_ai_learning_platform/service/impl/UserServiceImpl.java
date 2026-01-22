@@ -18,7 +18,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
@@ -130,10 +129,10 @@ public class UserServiceImpl implements UserService {
         user.setLearningModule(module);
         user.setStatus(UserStatus.WAITING_APPROVAL);
 
-        userRepository.save(user);
+        return userRepository.save(user);
     }
 
-    // ====================== legacy / admin ======================
+    // ======================= ADMIN APPROVE =======================
     @Override
     public void approveUser(Long userId) {
         User user = userRepository.findById(userId)

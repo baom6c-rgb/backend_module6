@@ -34,7 +34,11 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
             "317150227283-gojk42k4ohj7kgb6kadb2n6dd7sbj50p.apps.googleusercontent.com";
 
     @Override
-    public User authenticate(String idTokenString) throws Exception {
+    public User authenticate(String idTokenString) {
+
+        if (idTokenString == null || idTokenString.isBlank()) {
+            throw new RuntimeException("Google idToken is missing");
+        }
 
         GoogleIdTokenVerifier verifier = new GoogleIdTokenVerifier.Builder(
                 new NetHttpTransport(),
@@ -43,63 +47,70 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
                 .setAudience(Collections.singletonList(CLIENT_ID))
                 .build();
 
-        GoogleIdToken idToken = verifier.verify(idTokenString);
+        GoogleIdToken idToken;
+        try {
+            idToken = verifier.verify(idTokenString);
+        } catch (Exception e) {
+            throw new RuntimeException("Google token verification failed");
+        }
 
         if (idToken == null) {
-            throw new RuntimeException("Invalid Google token");
+            throw new RuntimeException("Invalid or expired Google token");
         }
 
         GoogleIdToken.Payload payload = idToken.getPayload();
 
         String email = payload.getEmail();
         String googleId = payload.getSubject();
-        String name = (String) payload.get("name");
-        String avatar = (String) payload.get("picture");
+        String fullName = (String) payload.get("name");
+        String avatarUrl = (String) payload.get("picture");
+
+        if (email == null || email.isBlank()) {
+            throw new RuntimeException("Google account has no email");
+        }
 
         User user = userRepository.findByEmail(email).orElse(null);
 
-        // ===================== NEW USER =====================
+        // ================== NEW USER ==================
         if (user == null) {
 
             user = new User();
             user.setEmail(email);
-            user.setFullName(name);
-            user.setAvatarUrl(avatar);
+            user.setFullName(fullName);
+            user.setAvatarUrl(avatarUrl);
 
             user.setRegisterMethod(RegisterMethod.GOOGLE);
             user.setLoginProvider(LoginProvider.GOOGLE);
             user.setProviderId(googleId);
-            user.setPasswordHash(null);
 
-
-            // ⭐⭐ QUAN TRỌNG
+            // 🔥 CHỈ CREATED
             user.setStatus(UserStatus.CREATED);
+
             user.setCreatedAt(LocalDateTime.now());
             user.setLastLoginAt(LocalDateTime.now());
 
             userRepository.save(user);
 
-            // ⭐⭐ GÁN ROLE STUDENT
-            Role studentRole = roleRepository.findByName("STUDENT")
-                    .orElseThrow(() ->
-                            new RuntimeException("Role STUDENT not found")
-                    );
+            Role role = roleRepository.findByName("STUDENT")
+                    .orElseThrow(() -> new RuntimeException("Role STUDENT not found"));
 
-            UserRole userRole = new UserRole();
-            userRole.setUser(user);
-            userRole.setRole(studentRole);
-
-            userRoleRepository.save(userRole);
+            UserRole ur = new UserRole();
+            ur.setUser(user);
+            ur.setRole(role);
+            userRoleRepository.save(ur);
         }
-        // ===================== EXISTING USER =====================
+        // ================== EXISTING USER ==================
         else {
 
             if (user.getStatus() == UserStatus.BLOCKED) {
                 throw new RuntimeException("Account is blocked");
             }
 
+            if (user.getLoginProvider() != LoginProvider.GOOGLE) {
+                throw new RuntimeException("Account registered with another method");
+            }
+
             user.setLastLoginAt(LocalDateTime.now());
-            userRepository.save(user);
         }
 
         return user;

@@ -8,6 +8,8 @@ import com.be_ai_learning_platform.dto.response.UserStatusResponse;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.service.UserService;
 import jakarta.validation.Valid;
+import com.be_ai_learning_platform.entity.User;
+import com.be_ai_learning_platform.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -25,13 +27,6 @@ public class UserController {
     public ResponseEntity<User> updateProfile(@PathVariable Long id, @RequestBody UserUpdateDTO updateDTO) {
         User updatedUser = userService.updateProfile(id, updateDTO);
         return ResponseEntity.ok(updatedUser);
-    }
-
-    // ===== US2: Google complete profile =====
-    @PostMapping("/complete-profile")
-    public ResponseEntity<Void> completeProfile(@RequestBody CompleteProfileRequest request) {
-        userService.completeProfile(request);
-        return ResponseEntity.ok().build();
     }
 
     // ===== US2: public polling status (waiting approval screen) =====
