@@ -1,7 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.dto.UserUpdateDTO;
-import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
 import com.be_ai_learning_platform.dto.request.StudentUpdateProfileRequest;
 import com.be_ai_learning_platform.dto.response.StudentProfileResponse;
 import com.be_ai_learning_platform.dto.response.UserStatusResponse;
@@ -18,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
@@ -106,30 +106,6 @@ public class UserServiceImpl implements UserService {
         user.setUpdatedAt(LocalDateTime.now());
 
         userRepository.save(user);
-    }
-
-    // ====================== US2: complete profile (Google) ======================
-    @Override
-    public void completeProfile(CompleteProfileRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
-                .orElseThrow(() -> new RuntimeException("User not found"));
-
-        if (user.getStatus() != UserStatus.CREATED) {
-            throw new RuntimeException("User is not allowed to complete profile");
-        }
-
-        ClassEntity clazz = classRepository.findById(request.getClassId())
-                .orElseThrow(() -> new RuntimeException("Class not found"));
-
-        LearningModule module = moduleRepository.findById(request.getModuleId())
-                .orElseThrow(() -> new RuntimeException("Module not found"));
-
-        user.setFullName(request.getFullName());
-        user.setClassName(clazz);
-        user.setLearningModule(module);
-        user.setStatus(UserStatus.WAITING_APPROVAL);
-
-        return userRepository.save(user);
     }
 
     // ======================= ADMIN APPROVE =======================
