@@ -1,16 +1,18 @@
 package com.be_ai_learning_platform.service;
 
-import com.be_ai_learning_platform.entity.User;
-import com.be_ai_learning_platform.entity.enums.UserStatus;
+import com.be_ai_learning_platform.dto.response.AdminResponse;
 
 import java.util.List;
 
 public interface AdminService {
-    List<User> getActiveUsers();
-    List<User> getAll();
-    User getById(Long id);
-    User add(User user);
-    User update(Long id, User user);
-    void delete(Long id);
-    List<User> findByStatus(UserStatus status);
+
+    // approvals
+    List<AdminResponse> getPendingApprovals();
+    void approve(Long userId);
+    void reject(Long userId);
+
+    // active students
+    List<AdminResponse> getActiveStudents();
+    void block(Long userId);
+    void unblock(Long userId);
 }

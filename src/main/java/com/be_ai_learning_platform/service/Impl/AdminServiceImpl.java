@@ -1,63 +1,110 @@
 package com.be_ai_learning_platform.service.impl;
+
+import com.be_ai_learning_platform.dto.response.AdminResponse;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
-import com.be_ai_learning_platform.repository.AdminRepository;
+import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.AdminService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
+@Transactional
 public class AdminServiceImpl implements AdminService {
 
-    private final AdminRepository adminRepository;
+    private final UserRepository userRepository;
 
     @Override
-    public List<User> getAll() {
-        return adminRepository.findAll();
+    public List<AdminResponse> getPendingApprovals() {
+        return userRepository.findByStatus(UserStatus.WAITING_APPROVAL)
+                .stream()
+                .map(this::toAdminResponse)
+                .toList();
     }
 
     @Override
-    public User getById(Long id) {
-        return adminRepository.findById(id)
+    public void approve(Long userId) {
+        User user = getUser(userId);
+
+        if (user.getStatus() != UserStatus.WAITING_APPROVAL) {
+            throw new RuntimeException("User is not waiting for approval");
+        }
+
+        user.setStatus(UserStatus.ACTIVE);
+        userRepository.save(user);
+    }
+
+    @Override
+    public void reject(Long userId) {
+        User user = getUser(userId);
+
+        if (user.getStatus() != UserStatus.WAITING_APPROVAL) {
+            throw new RuntimeException("User is not waiting for approval");
+        }
+
+        user.setStatus(UserStatus.REJECTED);
+        userRepository.save(user);
+    }
+
+    @Override
+    public List<AdminResponse> getActiveStudents() {
+        return userRepository.findByStatus(UserStatus.ACTIVE)
+                .stream()
+                .map(this::toAdminResponse)
+                .toList();
+    }
+
+    @Override
+    public void block(Long userId) {
+        User user = getUser(userId);
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new RuntimeException("Only ACTIVE user can be blocked");
+        }
+
+        user.setStatus(UserStatus.BLOCKED);
+        userRepository.save(user);
+    }
+
+    @Override
+    public void unblock(Long userId) {
+        User user = getUser(userId);
+
+        if (user.getStatus() != UserStatus.BLOCKED) {
+            throw new RuntimeException("Only BLOCKED user can be unblocked");
+        }
+
+        user.setStatus(UserStatus.ACTIVE);
+        userRepository.save(user);
+    }
+
+    private User getUser(Long id) {
+        return userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
     }
 
-    @Override
-    public User add(User user) {
-        if (user.getStatus() == null) {
-            user.setStatus(UserStatus.WAITING_APPROVAL);
-        }
-        return adminRepository.save(user);
-    }
+    private AdminResponse toAdminResponse(User u) {
+        // ✅ ClassEntity field trong dự án mày là: className (String) -> getter getClassName()
+        Long classId = (u.getClassName() != null) ? u.getClassName().getId() : null;
+        String className = (u.getClassName() != null) ? u.getClassName().getClassName() : null;
 
-    @Override
-    public User update(Long id, User user) {
-        User oldUser = getById(id);
+        // ✅ LearningModule field trong dự án mày là: moduleName (String) -> getter getModuleName()
+        Long moduleId = (u.getLearningModule() != null) ? u.getLearningModule().getId() : null;
+        String moduleName = (u.getLearningModule() != null) ? u.getLearningModule().getModuleName() : null;
 
-        oldUser.setFullName(user.getFullName());
-        oldUser.setEmail(user.getEmail());
-        oldUser.setClassName(user.getClassName());
-        oldUser.setLearningModule(user.getLearningModule());
-        oldUser.setStatus(user.getStatus()); // ⭐ cho phép đổi status
-
-        return adminRepository.save(oldUser);
-    }
-
-    @Override
-    public void delete(Long id) {
-        adminRepository.deleteById(id);
-    }
-
-    @Override
-    public List<User> getActiveUsers() {
-        return adminRepository.findByStatus(UserStatus.ACTIVE);
-    }
-
-    @Override
-    public List<User> findByStatus(UserStatus status) {
-        return adminRepository.findByStatus(status);
+        return AdminResponse.builder()
+                .id(u.getId())
+                .email(u.getEmail())
+                .fullName(u.getFullName())
+                .status(u.getStatus())
+                .classId(classId)
+                .className(className)
+                .moduleId(moduleId)
+                .moduleName(moduleName)
+                .build();
     }
 }

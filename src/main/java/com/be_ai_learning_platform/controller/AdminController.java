@@ -1,10 +1,8 @@
 package com.be_ai_learning_platform.controller;
 
-import com.be_ai_learning_platform.entity.User;
-import com.be_ai_learning_platform.entity.enums.UserStatus;
+import com.be_ai_learning_platform.dto.response.AdminResponse;
 import com.be_ai_learning_platform.service.AdminService;
-import lombok.RequiredArgsConstructor; // Sử dụng Lombok
-import org.springframework.http.HttpStatus;
+import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,36 +15,39 @@ public class AdminController {
 
     private final AdminService adminService;
 
-    @GetMapping
-    public ResponseEntity<List<User>> getAll() {
-        return ResponseEntity.ok(adminService.getAll());
+    // ===== Pending approvals =====
+    @GetMapping("/approvals/pending")
+    public ResponseEntity<List<AdminResponse>> pendingApprovals() {
+        return ResponseEntity.ok(adminService.getPendingApprovals());
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<User> getById(@PathVariable Long id) {
-        return ResponseEntity.ok(adminService.getById(id));
+    @PostMapping("/approvals/{id}/approve")
+    public ResponseEntity<Void> approve(@PathVariable Long id) {
+        adminService.approve(id);
+        return ResponseEntity.ok().build();
     }
 
-    @GetMapping("/students")
-    public ResponseEntity<List<User>> getActiveStudents() {
-        List<User> students = adminService.findByStatus(UserStatus.ACTIVE);
-        return ResponseEntity.ok(students);
+    @PostMapping("/approvals/{id}/reject")
+    public ResponseEntity<Void> reject(@PathVariable Long id) {
+        adminService.reject(id);
+        return ResponseEntity.ok().build();
     }
 
-    @PostMapping
-    public ResponseEntity<User> add(@RequestBody User user) {
-        User createdUser = adminService.add(user);
-        return new ResponseEntity<>(createdUser, HttpStatus.CREATED); // Trả về 201
+    // ===== Active students (block/unblock) =====
+    @GetMapping("/students/active")
+    public ResponseEntity<List<AdminResponse>> activeStudents() {
+        return ResponseEntity.ok(adminService.getActiveStudents());
     }
 
-    @PutMapping("/{id}")
-    public ResponseEntity<User> update(@PathVariable Long id, @RequestBody User user) {
-        return ResponseEntity.ok(adminService.update(id, user));
+    @PostMapping("/students/{id}/block")
+    public ResponseEntity<Void> block(@PathVariable Long id) {
+        adminService.block(id);
+        return ResponseEntity.ok().build();
     }
 
-    @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        adminService.delete(id);
-        return ResponseEntity.noContent().build(); // Trả về 204
+    @PostMapping("/students/{id}/unblock")
+    public ResponseEntity<Void> unblock(@PathVariable Long id) {
+        adminService.unblock(id);
+        return ResponseEntity.ok().build();
     }
 }

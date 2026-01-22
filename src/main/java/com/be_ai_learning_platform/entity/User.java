@@ -21,8 +21,6 @@ import java.util.List;
                 @UniqueConstraint(columnNames = {"login_provider", "provider_id"})
         }
 )
-
-
 public class User {
 
     @Id
@@ -40,6 +38,14 @@ public class User {
 
     private String fullName;
     private String avatarUrl;
+
+    // ✅ NEW (optional)
+    @Column(name = "phone_number", length = 20)
+    private String phoneNumber;
+
+    // ✅ NEW (optional)
+    @Column(name = "address", length = 255)
+    private String address;
 
     @Enumerated(EnumType.STRING)
     private RegisterMethod registerMethod;
@@ -60,7 +66,6 @@ public class User {
     @JoinColumn(name = "current_module_id")
     private LearningModule learningModule;
 
-    // 🔥 QUAN HỆ ROLE (BẮT BUỘC)
     @OneToMany(mappedBy = "user", fetch = FetchType.EAGER)
     private List<UserRole> userRoles;
 

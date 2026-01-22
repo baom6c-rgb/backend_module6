@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.security;
 
+import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
 import com.be_ai_learning_platform.repository.UserRepository;
 import jakarta.servlet.FilterChain;
@@ -44,7 +45,10 @@ public class JwtFilter extends OncePerRequestFilter {
         String path = request.getRequestURI();
 
         // ⭐ BỎ QUA AUTH
-        if (path.startsWith("/api/auth/") || path.equals("/api/users/complete-profile")) {
+        if (path.startsWith("/api/auth/")
+                || path.equals("/api/users/complete-profile")
+                || path.equals("/api/users/status")     // ✅ thêm dòng này
+        ) {
             chain.doFilter(request, response);
             return;
         }
@@ -67,9 +71,16 @@ public class JwtFilter extends OncePerRequestFilter {
 
         // ✅ US2: chỉ ACTIVE mới được vào hệ thống
         var userOpt = userRepository.findByEmail(email);
-        if (userOpt.isEmpty() || userOpt.get().getStatus() != UserStatus.ACTIVE) {
+
+        if (userOpt.isEmpty()) {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
-            // Optional: response.getWriter().write("Account not approved or blocked");
+            return;
+        }
+
+        User user = userOpt.get();
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             return;
         }
 
