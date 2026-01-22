@@ -3,8 +3,10 @@ package com.be_ai_learning_platform.entity;
 import com.be_ai_learning_platform.entity.enums.FileType;
 import com.be_ai_learning_platform.entity.enums.MaterialStatus;
 import jakarta.persistence.*;
-import java.time.LocalDateTime;
+import lombok.Data;
 
+import java.time.LocalDateTime;
+    @Data
     @Entity
     @Table(name = "learning_material")
     public class LearningMaterial {
