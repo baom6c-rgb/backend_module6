@@ -63,4 +63,51 @@ public class MailService {
 
         mailSender.send(message);
     }
+
+    /**
+     * Gửi mail thông báo tài khoản đã được duyệt
+     */
+    public void notifyApprovedSuccess(User user) {
+
+        if (user == null) {
+            throw new IllegalArgumentException("User is null");
+        }
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new IllegalStateException(
+                    "Không gửi mail khi status = " + user.getStatus()
+            );
+        }
+
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(user.getEmail());
+        message.setSubject("✅ Tài khoản đã được phê duyệt");
+
+        message.setText(
+                "Xin chào " + user.getFullName() + ",\n\n" +
+                        "🎉 Tài khoản của bạn đã được quản trị viên phê duyệt thành công.\n\n" +
+                        "👉 Bạn có thể đăng nhập và bắt đầu học ngay.\n\n" +
+                        "Chúc bạn học tập tốt!\n\n" +
+                        "— AI Learning Platform"
+        );
+
+        mailSender.send(message);
+    }
+    public void sendForgotPasswordMail(String email, String resetLink) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail); // Sử dụng giá trị từ @Value đã có
+        message.setTo(email);
+        message.setSubject("🔑 Đặt lại mật khẩu tài khoản AI Learning");
+
+        message.setText(
+                "Bạn nhận được email này vì đã yêu cầu đặt lại mật khẩu.\n\n" +
+                        "👉 Vui lòng click vào link bên dưới để thực hiện thay đổi (link có hiệu lực trong 15 phút):\n" +
+                        resetLink + "\n\n" +
+                        "Nếu bạn không yêu cầu điều này, vui lòng bỏ qua email này.\n\n" +
+                        "— AI Learning Platform"
+        );
+
+        mailSender.send(message);
+    }
 }

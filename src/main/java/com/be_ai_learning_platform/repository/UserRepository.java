@@ -31,4 +31,6 @@ public interface UserRepository extends JpaRepository<User, Long> {
             @Param("status") UserStatus status,
             @Param("roleName") String roleName
     );
+    // Trong UserRepository.java
+    Optional<User> findByResetPasswordToken(String token);
 }

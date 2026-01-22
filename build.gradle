@@ -39,6 +39,13 @@ dependencies {
     // Google OAuth2
     implementation 'com.google.api-client:google-api-client:2.2.0'
 
+    // Thư viện đọc file PDF (Apache PDFBox)
+    implementation 'org.apache.pdfbox:pdfbox:3.0.1'
+    // Thư viện đọc file Word .docx (Apache POI)
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'
+    // Thư viện hỗ trợ đọc file văn bản (nếu cần xử lý encoding phức tạp)
+    implementation 'commons-io:commons-io:2.15.1'
+
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     runtimeOnly 'com.mysql:mysql-connector-j'

@@ -1,9 +1,6 @@
 package com.be_ai_learning_platform.controller;
 
-import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
-import com.be_ai_learning_platform.dto.request.GoogleLoginRequest;
-import com.be_ai_learning_platform.dto.request.LoginRequest;
-import com.be_ai_learning_platform.dto.request.RegisterRequest;
+import com.be_ai_learning_platform.dto.request.*;
 import com.be_ai_learning_platform.dto.response.AuthResponse;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
@@ -37,6 +34,29 @@ public class AuthController {
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
         User user = authService.login(request);
         return buildAuthResponse(user);
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<String> logout(@RequestHeader("Authorization") String authHeader) {
+        if (authHeader != null && authHeader.startsWith("Bearer ")) {
+            String token = authHeader.substring(7);
+            authService.logout(token);
+        }
+        return ResponseEntity.ok("Đã đăng xuất thành công");
+    }
+
+    // 2. YÊU CẦU QUÊN MẬT KHẨU (Gửi mail)
+    @PostMapping("/forgot-password")
+    public ResponseEntity<String> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        authService.processForgotPassword(request.getEmail());
+        return ResponseEntity.ok("Link đặt lại mật khẩu đã được gửi vào email của bạn.");
+    }
+
+    // 3. ĐẶT LẠI MẬT KHẨU MỚI
+    @PostMapping("/reset-password")
+    public ResponseEntity<String> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        authService.updatePassword(request.getToken(), request.getNewPassword());
+        return ResponseEntity.ok("Mật khẩu đã được cập nhật thành công.");
     }
 
     @PostMapping("/google")
