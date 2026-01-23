@@ -25,43 +25,56 @@ public class FileExtractServiceImpl implements FileExtractService {
     private final LearningMaterialRepository materialRepository;
 
     @Override
-    public String extractAndSave(MultipartFile file, User user) throws IOException {
-        String originalFileName = file.getOriginalFilename();
-        if (originalFileName == null) throw new RuntimeException("Tên file không hợp lệ");
+    public Long extractAndSave(MultipartFile file, User user) throws IOException {
 
-        String fileName = originalFileName.toLowerCase();
-        String content = "";
-        FileType type;
-
-        // 1. Kiểm tra định dạng file (Validation)
-        if (fileName.endsWith(".pdf")) {
-            type = FileType.PDF;
-            try (PDDocument document = Loader.loadPDF(file.getBytes())) {
-                content = new PDFTextStripper().getText(document);
-            }
-        } else if (fileName.endsWith(".docx")) {
-            type = FileType.DOCX;
-            try (XWPFDocument doc = new XWPFDocument(file.getInputStream())) {
-                content = new XWPFWordExtractor(doc).getText();
-            }
-        } else if (fileName.endsWith(".txt")) {
-            type = FileType.TXT;
-            content = new String(file.getBytes(), StandardCharsets.UTF_8);
-        } else {
-            // 2. Báo lỗi nếu không đúng định dạng (Yêu cầu của bạn)
-            throw new RuntimeException("Định dạng file không được hỗ trợ. Chỉ chấp nhận PDF, DOCX, TXT.");
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("File không hợp lệ");
         }
 
-        // 3. Lưu thông tin
+        String originalFileName = file.getOriginalFilename();
+        if (originalFileName == null) {
+            throw new IllegalArgumentException("Tên file không hợp lệ");
+        }
+
+        String lowerName = originalFileName.toLowerCase();
+        FileType fileType;
+        String extractedText;
+
+        // 1️⃣ Extract text theo định dạng
+        if (lowerName.endsWith(".pdf")) {
+            fileType = FileType.PDF;
+            try (PDDocument document = Loader.loadPDF(file.getBytes())) {
+                PDFTextStripper stripper = new PDFTextStripper();
+                extractedText = stripper.getText(document);
+            }
+
+        } else if (lowerName.endsWith(".docx")) {
+            fileType = FileType.DOCX;
+            try (XWPFDocument doc = new XWPFDocument(file.getInputStream())) {
+                extractedText = new XWPFWordExtractor(doc).getText();
+            }
+
+        } else if (lowerName.endsWith(".txt")) {
+            fileType = FileType.TXT;
+            extractedText = new String(file.getBytes(), StandardCharsets.UTF_8);
+
+        } else {
+            throw new IllegalArgumentException(
+                    "Định dạng file không được hỗ trợ. Chỉ chấp nhận PDF, DOCX, TXT."
+            );
+        }
+
+        // 2️⃣ Lưu DB
         LearningMaterial material = new LearningMaterial();
         material.setUser(user);
         material.setFileName(originalFileName);
-        material.setFileType(type);
+        material.setFileType(fileType);
         material.setFileSize(file.getSize());
-        material.setExtractedText(content);
+        material.setExtractedText(extractedText);
         material.setStatus(MaterialStatus.EXTRACTED);
 
         materialRepository.save(material);
-        return content;
+
+        return material.getId();
     }
 }
