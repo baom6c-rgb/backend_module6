@@ -2,10 +2,19 @@ package com.be_ai_learning_platform.entity;
 
 import com.be_ai_learning_platform.entity.enums.ExamType;
 import jakarta.persistence.*;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "exam")
+@Getter // Thêm dòng này
+@Setter // Thêm dòng này
+@NoArgsConstructor
+@AllArgsConstructor
 public class Exam {
 
     @Id
