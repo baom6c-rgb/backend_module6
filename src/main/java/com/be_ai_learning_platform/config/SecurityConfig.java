@@ -23,7 +23,7 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-                // ✅ CORS – KHÔNG DEPRECATED
+                // ✅ CORS
                 .cors(cors -> {})
 
                 // ❌ CSRF OFF (API)
@@ -40,6 +40,10 @@ public class SecurityConfig {
                         // ⭐ PREFLIGHT
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
+                        // ⭐ PUBLIC STATIC FILES (AVATAR)
+                        .requestMatchers("/uploads/**").permitAll()
+
+                        // ⭐ PUBLIC APIs
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/classes/**",
@@ -52,14 +56,16 @@ public class SecurityConfig {
                         // 🔐 ADMIN
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
 
-                        // 🔐 STUDENT (US2)
-                        // nếu đặt route học tập theo /api/student/**
+                        // 🔐 STUDENT
                         .requestMatchers("/api/student/**").hasRole("STUDENT")
+
                         // 🔐 USER (login rồi)
                         .requestMatchers(
-                                "/api/users/me"    //phần này để test, sau xoá
+                                "/api/users/me",
+                                "/api/users/me/**"
                         ).authenticated()
 
+                        // 🔐 DEFAULT
                         .anyRequest().authenticated()
                 )
 

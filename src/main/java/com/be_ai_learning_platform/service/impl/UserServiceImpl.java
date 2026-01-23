@@ -29,6 +29,7 @@ public class UserServiceImpl implements UserService {
     private final ClassRepository classRepository;
     private final ModuleRepository moduleRepository;
     private final MailService mailService;
+    private final com.be_ai_learning_platform.service.AvatarStorageService avatarStorageService;
 
     // ====================== US2: polling status ======================
     @Override
@@ -78,14 +79,14 @@ public class UserServiceImpl implements UserService {
 
         // normalize nhẹ
         String fullName = request.getFullName() != null ? request.getFullName().trim() : null;
-        String avatarUrl = request.getAvatarUrl() != null ? request.getAvatarUrl().trim() : null;
         String phone = request.getPhoneNumber() != null ? request.getPhoneNumber().trim() : null;
         String address = request.getAddress() != null ? request.getAddress().trim() : null;
 
         user.setFullName(fullName);
-        user.setAvatarUrl(avatarUrl);
         user.setPhoneNumber(phone);
         user.setAddress(address);
+
+        // ❌ KHÔNG cập nhật avatarUrl ở đây (avatar update qua /api/users/me/avatar)
         user.setUpdatedAt(LocalDateTime.now());
 
         userRepository.save(user);
@@ -102,12 +103,32 @@ public class UserServiceImpl implements UserService {
         }
 
         user.setFullName(request.getFullName());
-        user.setAvatarUrl(request.getAvatarUrl());
         user.setPhoneNumber(request.getPhoneNumber());
         user.setAddress(request.getAddress());
+
+        // ❌ KHÔNG cập nhật avatarUrl ở đây (avatar update qua /api/users/me/avatar)
         user.setUpdatedAt(LocalDateTime.now());
 
         userRepository.save(user);
+    }
+
+    @Override
+    public StudentProfileResponse updateMyAvatarByEmail(String email, org.springframework.web.multipart.MultipartFile file) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new RuntimeException("User is not active");
+        }
+
+        String avatarUrl = avatarStorageService.storeAvatar(file, user.getId());
+
+        user.setAvatarUrl(avatarUrl);
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
+
+        // reuse existing response builder
+        return getMyProfileByEmail(email);
     }
 
     // ======================= ADMIN APPROVE =======================
@@ -130,7 +151,6 @@ public class UserServiceImpl implements UserService {
         // 🔥 GỬI MAIL THÔNG BÁO CHO USER
         mailService.notifyApprovedSuccess(user);
     }
-
 
     @Override
     public User updateProfile(Long id, UserUpdateDTO updateDTO) {

@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/users")
@@ -50,6 +51,15 @@ public class UserController {
         String email = authentication.getName();
         userService.updateStudentProfileByEmail(email, request);
         return ResponseEntity.ok().build();
+    }
+
+    @PostMapping("/me/avatar")
+    public ResponseEntity<StudentProfileResponse> uploadMyAvatar(
+            Authentication authentication,
+            @RequestParam("file") MultipartFile file
+    ) {
+        String email = authentication.getName();
+        return ResponseEntity.ok(userService.updateMyAvatarByEmail(email, file));
     }
 
     // ===== test only - remove later =====
