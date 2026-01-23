@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
+import com.be_ai_learning_platform.dto.request.AdminAddAdminRequest;
 import com.be_ai_learning_platform.dto.request.AdminAddUserRequest;
 import com.be_ai_learning_platform.dto.request.AdminUpdateUserRequest;
 import com.be_ai_learning_platform.dto.response.AdminResponse;
@@ -31,8 +32,7 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 @Transactional
-public class
-AdminServiceImpl implements AdminService {
+public class AdminServiceImpl implements AdminService {
 
     private final UserRepository userRepository;
     private final ClassRepository classRepository;
@@ -47,11 +47,22 @@ AdminServiceImpl implements AdminService {
     // =========================================================
     // US4 - Admin add user + list all users
     // =========================================================
-
     @Override
     public AdminResponse addUser(AdminAddUserRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new RuntimeException("Email đã tồn tại!");
+        }
+
+        String roleName = request.getRoleName() == null ? "" : request.getRoleName().trim().toUpperCase();
+        if ("ADMIN".equals(roleName)) {
+            throw new RuntimeException("Dùng API /api/admin/users/admin để tạo ADMIN");
+        }
+
+        if (request.getClassId() == null) {
+            throw new RuntimeException("ID lớp không được trống");
+        }
+        if (request.getModuleId() == null) {
+            throw new RuntimeException("ID học phần không được trống");
         }
 
         ClassEntity clazz = classRepository.findById(request.getClassId())
@@ -64,9 +75,10 @@ AdminServiceImpl implements AdminService {
                 .orElseThrow(() -> new RuntimeException("Quyền " + request.getRoleName() + " không tồn tại"));
 
         User user = new User();
-        user.setEmail(request.getEmail());
-        user.setFullName(request.getFullName());
+        user.setEmail(request.getEmail().trim());
+        user.setFullName(request.getFullName().trim());
         user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+
         user.setClassName(clazz);
         user.setLearningModule(module);
 
@@ -81,6 +93,40 @@ AdminServiceImpl implements AdminService {
         UserRole userRole = new UserRole();
         userRole.setUser(savedUser);
         userRole.setRole(foundRole);
+        userRoleRepository.save(userRole);
+
+        return toAdminResponse(savedUser);
+    }
+
+    @Override
+    public AdminResponse addAdmin(AdminAddAdminRequest request) {
+        if (userRepository.existsByEmail(request.getEmail())) {
+            throw new RuntimeException("Email đã tồn tại!");
+        }
+
+        Role adminRole = roleRepository.findByName("ADMIN")
+                .orElseThrow(() -> new RuntimeException("Quyền ADMIN không tồn tại"));
+
+        User user = new User();
+        user.setEmail(request.getEmail().trim());
+        user.setFullName(request.getFullName().trim());
+        user.setPasswordHash(passwordEncoder.encode(request.getPassword()));
+
+        // ✅ ADMIN: allow NULL in DB for class/module
+        user.setClassName(null);
+        user.setLearningModule(null);
+
+        user.setLoginProvider(LoginProvider.FORM);
+        user.setRegisterMethod(RegisterMethod.FORM);
+        user.setStatus(UserStatus.ACTIVE);
+        user.setCreatedAt(LocalDateTime.now());
+        user.setIsDeleted(false);
+
+        User savedUser = userRepository.save(user);
+
+        UserRole userRole = new UserRole();
+        userRole.setUser(savedUser);
+        userRole.setRole(adminRole);
         userRoleRepository.save(userRole);
 
         return toAdminResponse(savedUser);
@@ -281,6 +327,11 @@ AdminServiceImpl implements AdminService {
     }
 
     private AdminResponse toAdminResponse(User u) {
+        String roleName = null;
+        if (u.getUserRoles() != null && !u.getUserRoles().isEmpty() && u.getUserRoles().get(0).getRole() != null) {
+            roleName = u.getUserRoles().get(0).getRole().getName();
+        }
+
         return AdminResponse.builder()
                 .id(u.getId())
                 .email(u.getEmail())
@@ -290,11 +341,7 @@ AdminServiceImpl implements AdminService {
                 // 🔥 BỔ SUNG CHO ADMIN
                 .registerMethod(u.getRegisterMethod())
                 .loginProvider(u.getLoginProvider())
-                .role(
-                        u.getUserRoles() != null && !u.getUserRoles().isEmpty()
-                                ? u.getUserRoles().get(0).getRole().getName()
-                                : null
-                )
+                .role(roleName)
 
                 // optional hiển thị nhanh
                 .classId(u.getClassName() != null ? u.getClassName().getId() : null)

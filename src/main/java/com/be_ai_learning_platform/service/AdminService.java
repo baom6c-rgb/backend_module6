@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.service;
 
+import com.be_ai_learning_platform.dto.request.AdminAddAdminRequest;
 import com.be_ai_learning_platform.dto.request.AdminUpdateUserRequest;
 import com.be_ai_learning_platform.dto.response.AdminResponse;
 import com.be_ai_learning_platform.dto.response.AdminUserDetailResponse;
@@ -23,6 +24,7 @@ public interface AdminService {
     void reject(Long userId);
     void block(Long userId);
     void unblock(Long userId);
+    AdminResponse addAdmin(AdminAddAdminRequest request);
 
     // ===== US5 =====
     AdminUserDetailResponse getUserDetail(Long userId);
