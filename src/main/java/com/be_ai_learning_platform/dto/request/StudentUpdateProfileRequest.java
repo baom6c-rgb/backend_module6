@@ -11,12 +11,9 @@ public class StudentUpdateProfileRequest {
     @NotBlank(message = "Full name is required")
     private String fullName;
 
-    // optional
-    private String avatarUrl;
-
     // ✅ Phone: validate nhẹ
     @Pattern(
-            regexp = "^(\\+?[0-9]{9,15})$",
+            regexp = "^[0-9+()\\- ]{8,20}$",
             message = "Invalid phone number"
     )
     private String phoneNumber;
