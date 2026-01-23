@@ -2,6 +2,7 @@ package com.be_ai_learning_platform.controller;
 
 import com.be_ai_learning_platform.dto.request.AdminUpdateUserRequest;
 import com.be_ai_learning_platform.dto.request.AdminAddUserRequest;
+import com.be_ai_learning_platform.dto.request.AdminAddAdminRequest;
 import com.be_ai_learning_platform.dto.response.AdminResponse;
 import com.be_ai_learning_platform.dto.response.AdminUserDetailResponse;
 import com.be_ai_learning_platform.dto.response.OptionResponse;
@@ -21,9 +22,16 @@ public class AdminController {
 
     private final AdminService adminService;
 
-    // US4: Admin tạo user mới
+    // ✅ Create ADMIN (không cần class/module)
+    @PostMapping("/users/admin")
+    public ResponseEntity<AdminResponse> addAdmin(@Valid @RequestBody AdminAddAdminRequest request) {
+        return new ResponseEntity<>(adminService.addAdmin(request), HttpStatus.CREATED);
+    }
+
+    // ✅ Create STUDENT (giữ endpoint cũ)
     @PostMapping("/users")
     public ResponseEntity<AdminResponse> addUser(@Valid @RequestBody AdminAddUserRequest request) {
+        // option: enforce roleName phải là STUDENT ở đây cho chắc
         return new ResponseEntity<>(adminService.addUser(request), HttpStatus.CREATED);
     }
 
@@ -45,6 +53,7 @@ public class AdminController {
         adminService.approve(id);
         return ResponseEntity.ok().build();
     }
+
     // Từ chối user
     @PostMapping("/approvals/{id}/reject")
     public ResponseEntity<Void> reject(@PathVariable Long id) {
@@ -74,7 +83,6 @@ public class AdminController {
     public ResponseEntity<List<AdminResponse>> blockedStudents() {
         return ResponseEntity.ok(adminService.getBlockedUsers());
     }
-
 
     // ====================== US5 ======================
 
@@ -108,5 +116,4 @@ public class AdminController {
     public ResponseEntity<List<OptionResponse>> moduleOptions() {
         return ResponseEntity.ok(adminService.getModuleOptions());
     }
-
 }
