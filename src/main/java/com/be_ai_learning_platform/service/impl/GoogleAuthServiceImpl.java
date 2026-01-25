@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collections;
 
 @Service
@@ -62,18 +63,22 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
 
         String email = payload.getEmail();
         String googleId = payload.getSubject();
-        String fullName = (String) payload.get("name");
-        String avatarUrl = (String) payload.get("picture");
+        String fullName = (String) payload.get("name");      // có thể null
+        String avatarUrl = (String) payload.get("picture");  // có thể null
 
         if (email == null || email.isBlank()) {
             throw new RuntimeException("Google account has no email");
+        }
+
+        // fallback fullName nếu Google không trả
+        if (fullName == null || fullName.isBlank()) {
+            fullName = email.split("@")[0];
         }
 
         User user = userRepository.findByEmail(email).orElse(null);
 
         // ================== NEW USER ==================
         if (user == null) {
-
             user = new User();
             user.setEmail(email);
             user.setFullName(fullName);
@@ -83,11 +88,16 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
             user.setLoginProvider(LoginProvider.GOOGLE);
             user.setProviderId(googleId);
 
-            // 🔥 CHỈ CREATED
+            // mới login lần đầu -> CREATED
             user.setStatus(UserStatus.CREATED);
 
             user.setCreatedAt(LocalDateTime.now());
             user.setLastLoginAt(LocalDateTime.now());
+
+            // đảm bảo list không null để add role
+            if (user.getUserRoles() == null) {
+                user.setUserRoles(new ArrayList<>());
+            }
 
             userRepository.save(user);
 
@@ -97,22 +107,60 @@ public class GoogleAuthServiceImpl implements GoogleAuthService {
             UserRole ur = new UserRole();
             ur.setUser(user);
             ur.setRole(role);
+
             userRoleRepository.save(ur);
+
+            // ✅ QUAN TRỌNG: gắn vào collection để response có roles ngay
+            user.getUserRoles().add(ur);
+
+            return user;
         }
+
         // ================== EXISTING USER ==================
-        else {
-
-            if (user.getStatus() == UserStatus.BLOCKED) {
-                throw new RuntimeException("Account is blocked");
-            }
-
-            if (user.getLoginProvider() != LoginProvider.GOOGLE) {
-                throw new RuntimeException("Account registered with another method");
-            }
-
-            user.setLastLoginAt(LocalDateTime.now());
+        if (user.getStatus() == UserStatus.BLOCKED) {
+            throw new RuntimeException("Account is blocked");
         }
 
+        if (user.getLoginProvider() != LoginProvider.GOOGLE) {
+            throw new RuntimeException("Account registered with another method");
+        }
+
+        // update missing fields nếu trước đó bị null
+        if (user.getFullName() == null || user.getFullName().isBlank()) {
+            user.setFullName(fullName);
+        }
+        if ((user.getAvatarUrl() == null || user.getAvatarUrl().isBlank()) && avatarUrl != null) {
+            user.setAvatarUrl(avatarUrl);
+        }
+
+        user.setLastLoginAt(LocalDateTime.now());
+
+        if (user.getProviderId() == null || user.getProviderId().isBlank()) {
+            user.setProviderId(googleId);
+        }
+
+        // đảm bảo userRoles không null
+        if (user.getUserRoles() == null) {
+            user.setUserRoles(new ArrayList<>());
+        }
+
+        // đảm bảo có STUDENT role (chống case data cũ thiếu role)
+        boolean hasStudentRole = user.getUserRoles().stream()
+                .anyMatch(ur -> ur.getRole() != null && "STUDENT".equals(ur.getRole().getName()));
+
+        if (!hasStudentRole) {
+            Role role = roleRepository.findByName("STUDENT")
+                    .orElseThrow(() -> new RuntimeException("Role STUDENT not found"));
+
+            UserRole ur = new UserRole();
+            ur.setUser(user);
+            ur.setRole(role);
+
+            userRoleRepository.save(ur);
+            user.getUserRoles().add(ur);
+        }
+
+        // @Transactional -> dirty checking tự update
         return user;
     }
 }

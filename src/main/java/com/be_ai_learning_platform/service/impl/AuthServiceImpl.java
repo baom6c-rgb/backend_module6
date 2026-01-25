@@ -98,7 +98,7 @@ public class AuthServiceImpl implements AuthService {
     }
     // ======================= COMPLETE PROFILE (GOOGLE) =======================
     @Override
-    public void completeProfile(CompleteProfileRequest request) {
+    public User completeProfile(CompleteProfileRequest request) {
 
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new RuntimeException("User not found"));
@@ -113,7 +113,16 @@ public class AuthServiceImpl implements AuthService {
         LearningModule module = moduleRepository.findById(request.getModuleId())
                 .orElseThrow(() -> new RuntimeException("Module not found"));
 
-        user.setFullName(request.getFullName());
+        // fullName có thể null -> fallback
+        String fullName = request.getFullName();
+        if (fullName == null || fullName.isBlank()) {
+            fullName = user.getFullName();
+        }
+        if (fullName == null || fullName.isBlank()) {
+            fullName = user.getEmail().split("@")[0];
+        }
+
+        user.setFullName(fullName);
         user.setClassName(clazz);
         user.setLearningModule(module);
 
@@ -123,7 +132,10 @@ public class AuthServiceImpl implements AuthService {
         userRepository.save(user);
 
         mailService.notifyWaitingApproval(user);
+
+        return user; // ✅ trả về để build token
     }
+
 
     // ======================= PRIVATE =======================
     private void assignStudentRole(User user) {
