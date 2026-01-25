@@ -1,13 +1,14 @@
 package com.be_ai_learning_platform.repository;
 
 import com.be_ai_learning_platform.entity.UserRole;
-import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
 
-public interface UserRoleRepository extends JpaRepository<UserRole, Long> {
+import java.util.List;
 
-    @Transactional
-    void deleteAllByUser_Id(Long userId);
+public interface UserRoleRepository extends CrudRepository<UserRole, Long> {
 
-    boolean existsByUser_IdAndRole_Id(Long userId, Long roleId);
+    @Query("select ur.role.name from UserRole ur where ur.user.id = :userId")
+    List<String> findRoleNamesByUserId(@Param("userId") Long userId);
 }

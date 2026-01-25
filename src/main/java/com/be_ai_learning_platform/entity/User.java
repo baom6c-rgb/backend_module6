@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Entity
@@ -72,8 +73,8 @@ public class User {
     @JoinColumn(name = "current_module_id")
     private LearningModule learningModule;
 
-    @OneToMany(mappedBy = "user", fetch = FetchType.EAGER)
-    private List<UserRole> userRoles;
+    @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<UserRole> userRoles = new ArrayList<>();
 
     private LocalDateTime createdAt = LocalDateTime.now();
     private LocalDateTime updatedAt;

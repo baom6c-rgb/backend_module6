@@ -4,6 +4,7 @@ import com.be_ai_learning_platform.dto.request.*;
 import com.be_ai_learning_platform.dto.response.AuthResponse;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
+import com.be_ai_learning_platform.repository.UserRoleRepository;
 import com.be_ai_learning_platform.security.JwtUtil;
 import com.be_ai_learning_platform.service.AuthService;
 import com.be_ai_learning_platform.service.GoogleAuthService;
@@ -23,6 +24,9 @@ public class AuthController {
     private final AuthService authService;
     private final GoogleAuthService googleAuthService;
     private final JwtUtil jwtUtil;
+
+    // ✅ thêm
+    private final UserRoleRepository userRoleRepository;
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request) {
@@ -45,14 +49,12 @@ public class AuthController {
         return ResponseEntity.ok("Đã đăng xuất thành công");
     }
 
-    // 2. YÊU CẦU QUÊN MẬT KHẨU (Gửi mail)
     @PostMapping("/forgot-password")
     public ResponseEntity<String> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
         authService.processForgotPassword(request.getEmail());
         return ResponseEntity.ok("Link đặt lại mật khẩu đã được gửi vào email của bạn.");
     }
 
-    // 3. ĐẶT LẠI MẬT KHẨU MỚI
     @PostMapping("/reset-password")
     public ResponseEntity<String> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
         authService.updatePassword(request.getToken(), request.getNewPassword());
@@ -60,16 +62,16 @@ public class AuthController {
     }
 
     @PostMapping("/google")
-    public ResponseEntity<AuthResponse> loginWithGoogle(@RequestBody GoogleLoginRequest request) throws Exception {
+    public ResponseEntity<AuthResponse> loginWithGoogle(@RequestBody GoogleLoginRequest request) {
         User user = googleAuthService.authenticate(request.getIdToken());
         return buildAuthResponse(user);
     }
+
+    // ✅ complete-profile trả AuthResponse để FE nhận token WAITING_APPROVAL
     @PostMapping("/complete-profile")
-    public ResponseEntity<?> completeProfile(
-            @RequestBody CompleteProfileRequest request
-    ) {
-        authService.completeProfile(request);
-        return ResponseEntity.ok("Profile completed. Waiting for approval");
+    public ResponseEntity<AuthResponse> completeProfile(@RequestBody CompleteProfileRequest request) {
+        User user = authService.completeProfile(request);
+        return buildAuthResponse(user);
     }
 
     private ResponseEntity<AuthResponse> buildAuthResponse(User user) {
@@ -77,32 +79,26 @@ public class AuthController {
             throw new RuntimeException("Tài khoản đã bị khóa");
         }
 
-        if (user.getStatus() != UserStatus.ACTIVE) {
-            return ResponseEntity.ok(
-                    new AuthResponse(
-                            null,
-                            null,
-                            user.getStatus().name(),
-                            user.getEmail()
-                    )
-            );
+        // ✅ lấy roles chắc chắn (không dựa vào user.getUserRoles())
+        List<String> roles = userRoleRepository.findRoleNamesByUserId(user.getId());
 
+        // ✅ CREATED: chưa cần token
+        if (user.getStatus() == UserStatus.CREATED) {
+            return ResponseEntity.ok(new AuthResponse(null, roles, user.getStatus().name(), user.getEmail()));
         }
 
-        List<String> roles = user.getUserRoles().stream()
-                .map(ur -> ur.getRole().getName())
-                .toList();
+        // ✅ WAITING_APPROVAL: phát token để vào màn hình chờ (Hướng B)
+        if (user.getStatus() == UserStatus.WAITING_APPROVAL) {
+            String token = jwtUtil.generateToken(user.getEmail(), roles);
+            return ResponseEntity.ok(new AuthResponse(token, roles, user.getStatus().name(), user.getEmail()));
+        }
 
-        String token = jwtUtil.generateToken(user.getEmail(), roles);
+        // ✅ ACTIVE: token bình thường
+        if (user.getStatus() == UserStatus.ACTIVE) {
+            String token = jwtUtil.generateToken(user.getEmail(), roles);
+            return ResponseEntity.ok(new AuthResponse(token, roles, user.getStatus().name(), user.getEmail()));
+        }
 
-        return ResponseEntity.ok(
-                new AuthResponse(
-                        token,
-                        roles,
-                        user.getStatus().name(),
-                        user.getEmail()
-                )
-        );
-
+        return ResponseEntity.ok(new AuthResponse(null, roles, user.getStatus().name(), user.getEmail()));
     }
 }

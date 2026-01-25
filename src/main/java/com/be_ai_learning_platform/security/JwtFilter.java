@@ -25,8 +25,6 @@ import java.util.stream.Collectors;
 public class JwtFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
-
-    // ✅ US2 gate: check status từ DB để token cũ không dùng được khi bị block/unapproved
     private final UserRepository userRepository;
 
     @Override
@@ -36,7 +34,6 @@ public class JwtFilter extends OncePerRequestFilter {
             @NonNull FilterChain chain
     ) throws ServletException, IOException {
 
-        // ⭐ BỎ QUA PREFLIGHT
         if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
             chain.doFilter(request, response);
             return;
@@ -44,10 +41,13 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String path = request.getRequestURI();
 
-        // ⭐ BỎ QUA AUTH
+        // public
         if (path.startsWith("/api/auth/")
-                || path.equals("/api/users/complete-profile")
-                || path.equals("/api/users/status")     // ✅ thêm dòng này
+                || path.startsWith("/uploads/")
+                || path.equals("/api/users/status")
+                || path.startsWith("/api/classes/")
+                || path.startsWith("/api/modules/")
+                || path.equals("/error")
         ) {
             chain.doFilter(request, response);
             return;
@@ -60,8 +60,6 @@ public class JwtFilter extends OncePerRequestFilter {
         }
 
         String token = header.substring(7);
-
-        // ⭐ CHẶN Bearer null
         if (token.isBlank() || token.equals("null")) {
             chain.doFilter(request, response);
             return;
@@ -69,9 +67,7 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String email = jwtUtil.extractEmail(token);
 
-        // ✅ US2: chỉ ACTIVE mới được vào hệ thống
         var userOpt = userRepository.findByEmail(email);
-
         if (userOpt.isEmpty()) {
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             return;
@@ -79,26 +75,29 @@ public class JwtFilter extends OncePerRequestFilter {
 
         User user = userOpt.get();
 
+        // ✅ set Authentication cho cả ACTIVE và WAITING_APPROVAL
+        List<String> roles = jwtUtil.extractRoles(token);
+        List<GrantedAuthority> authorities = roles.stream()
+                .map(r -> new SimpleGrantedAuthority("ROLE_" + r))
+                .collect(Collectors.toList());
+
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(email, null, authorities)
+        );
+
+        // ✅ chặn API nếu chưa ACTIVE (WAITING_APPROVAL chỉ được “đứng chờ”)
         if (user.getStatus() != UserStatus.ACTIVE) {
+            // cho phép gọi các API “an toàn” nếu m cần sau này
+            if (user.getStatus() == UserStatus.WAITING_APPROVAL) {
+                // ví dụ: cho phép /api/users/me nếu cần hiển thị info
+                if (path.equals("/api/users/me") || path.equals("/api/users/status")) {
+                    chain.doFilter(request, response);
+                    return;
+                }
+            }
             response.setStatus(HttpServletResponse.SC_FORBIDDEN);
             return;
         }
-
-        List<String> roles = jwtUtil.extractRoles(token);
-
-        // ✅ Fix incompatible types: cast về GrantedAuthority + Collectors.toList()
-        List<GrantedAuthority> authorities = roles.stream()
-                .map(role -> new SimpleGrantedAuthority("ROLE_" + role))
-                .collect(Collectors.toList());
-
-        UsernamePasswordAuthenticationToken authentication =
-                new UsernamePasswordAuthenticationToken(
-                        email,
-                        null,
-                        authorities
-                );
-
-        SecurityContextHolder.getContext().setAuthentication(authentication);
 
         chain.doFilter(request, response);
     }
