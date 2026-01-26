@@ -50,10 +50,6 @@ public class SecurityConfig {
                                 "/api/users/status",
                                 "/api/modules/**",
                                 "/admin/approve",
-<<<<<<< HEAD
-                                "/api/test/ai/**",
-=======
->>>>>>> dev
                                 "/error"
                         ).permitAll()
 
