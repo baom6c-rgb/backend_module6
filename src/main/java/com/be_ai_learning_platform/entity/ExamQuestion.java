@@ -1,7 +1,9 @@
 package com.be_ai_learning_platform.entity;
 
 import jakarta.persistence.*;
+import lombok.Data;
 
+@Data
 @Entity
 @Table(
         name = "exam_question",

@@ -5,8 +5,15 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+<<<<<<< HEAD
+import java.util.Optional;
+
+public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> {
+    Optional<ExamAttempt> findByIdAndUserId(Long id, Long userId);
+=======
 public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> {
 
+>>>>>>> dev
     // ✅ Completed = attempt có score (đã chấm)
     @Query(value = """
         SELECT COUNT(*)
@@ -59,4 +66,16 @@ public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> 
         WHERE t.user_id = :userId
         """, nativeQuery = true)
     Integer getRankAmongStudentsByUser(@Param("userId") Long userId);
+<<<<<<< HEAD
+
+    @Query("""
+    select ea
+    from ExamAttempt ea
+    join fetch ea.exam e
+    where ea.id = :id and ea.user.id = :userId
+""")
+    Optional<ExamAttempt> findByIdAndUserIdFetchExam(@Param("id") Long id, @Param("userId") Long userId);
+
+=======
+>>>>>>> dev
 }

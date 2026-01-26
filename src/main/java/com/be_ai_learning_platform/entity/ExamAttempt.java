@@ -18,7 +18,6 @@ public class ExamAttempt {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // ✅ ADD: owner attempt
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
@@ -33,4 +32,8 @@ public class ExamAttempt {
 
     @Enumerated(EnumType.STRING)
     private ExamResult status;
+    // ✅ NEW: lưu đáp án user chọn để review
+    @Lob
+    @Column(name = "answers_json", columnDefinition = "LONGTEXT")
+    private String answersJson;
 }

@@ -2,9 +2,10 @@ package com.be_ai_learning_platform.entity;
 
 import com.be_ai_learning_platform.entity.enums.QuestionType;
 import jakarta.persistence.*;
+import lombok.Data;
 
 
-
+@Data
 @Entity
 @Table(name = "question")
 public class Question {
@@ -28,4 +29,8 @@ public class Question {
 
     @Column(columnDefinition = "TEXT")
     private String analysis;
+
+    @Lob
+    @Column(name = "options_json", columnDefinition = "TEXT")
+    private String optionsJson;
 }
