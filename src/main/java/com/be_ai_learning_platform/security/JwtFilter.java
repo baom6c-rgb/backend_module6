@@ -47,7 +47,10 @@ public class JwtFilter extends OncePerRequestFilter {
                 || path.equals("/api/users/status")
                 || path.startsWith("/api/classes/")
                 || path.startsWith("/api/modules/")
+<<<<<<< HEAD
                 || path.startsWith("/api/test/ai/")
+=======
+>>>>>>> dev
                 || path.equals("/error")
         ) {
             chain.doFilter(request, response);
