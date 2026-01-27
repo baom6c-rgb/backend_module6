@@ -31,7 +31,6 @@ public class AdminController {
     // ✅ Create STUDENT (giữ endpoint cũ)
     @PostMapping("/users")
     public ResponseEntity<AdminResponse> addUser(@Valid @RequestBody AdminAddUserRequest request) {
-        // option: enforce roleName phải là STUDENT ở đây cho chắc
         return new ResponseEntity<>(adminService.addUser(request), HttpStatus.CREATED);
     }
 
@@ -54,10 +53,17 @@ public class AdminController {
         return ResponseEntity.ok().build();
     }
 
-    // Từ chối user
+    /**
+     * ✅ Nghiệp vụ mới:
+     * Reject = XÓA user khỏi DB (hard delete)
+     * - Chỉ cho phép khi user.status == WAITING_APPROVAL
+     * - Không cho delete ADMIN
+     *
+     * (Giữ nguyên endpoint để FE chưa cần đổi ngay)
+     */
     @PostMapping("/approvals/{id}/reject")
     public ResponseEntity<Void> reject(@PathVariable Long id) {
-        adminService.reject(id);
+        adminService.reject(id); // service sẽ delete
         return ResponseEntity.ok().build();
     }
 

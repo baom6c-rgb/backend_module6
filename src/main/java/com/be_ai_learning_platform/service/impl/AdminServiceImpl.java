@@ -183,13 +183,30 @@ public class AdminServiceImpl implements AdminService {
         User user = getUser(userId);
 
         if (user.getStatus() != UserStatus.WAITING_APPROVAL) {
-            throw new RuntimeException("User is not waiting for approval");
+            throw new RuntimeException("Chỉ có thể từ chối user đang chờ duyệt");
         }
 
-        // reject = đổi trạng thái (KHÔNG delete DB)
-        user.setStatus(UserStatus.REJECTED);
-        userRepository.save(user);
+        boolean isAdmin = user.getUserRoles() != null
+                && !user.getUserRoles().isEmpty()
+                && user.getUserRoles().get(0).getRole() != null
+                && "ADMIN".equalsIgnoreCase(user.getUserRoles().get(0).getRole().getName());
+
+        if (isAdmin) {
+            throw new RuntimeException("Không thể từ chối ADMIN");
+        }
+
+        // 🔥 QUAN TRỌNG: clear collection đang managed
+        if (user.getUserRoles() != null) {
+            user.getUserRoles().clear();
+        }
+
+        // 🔥 bulk delete + auto clear persistence context
+        userRoleRepository.deleteByUserId(user.getId());
+
+        userRepository.delete(user);
     }
+
+
 
     // =========================================================
     // US6 - Students lists + block/unblock

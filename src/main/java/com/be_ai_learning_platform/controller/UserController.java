@@ -9,6 +9,7 @@ import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -30,8 +31,13 @@ public class UserController {
 
     // ===== US2: public polling status (waiting approval screen) =====
     @GetMapping("/status")
-    public ResponseEntity<UserStatusResponse> getStatus(@RequestParam String email) {
-        return ResponseEntity.ok(userService.getStatusByEmail(email));
+    public ResponseEntity<?> getStatus(@RequestParam String email) {
+        try {
+            return ResponseEntity.ok(userService.getStatusByEmail(email));
+        } catch (RuntimeException ex) {
+            // user bị reject-delete hoặc không tồn tại
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("User not found");
+        }
     }
 
     // ===== US3: student profile =====
@@ -71,7 +77,6 @@ public class UserController {
             userService.changeMyPasswordByEmail(email, request);
             return ResponseEntity.ok("Đổi mật khẩu thành công");
         } catch (Exception e) {
-            // ❗ trả string để FE toast được, và tránh 401
             String msg = (e.getMessage() != null && !e.getMessage().isBlank())
                     ? e.getMessage()
                     : "Đổi mật khẩu thất bại";
