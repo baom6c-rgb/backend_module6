@@ -14,6 +14,7 @@ import com.be_ai_learning_platform.service.PracticeService;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.benmanes.caffeine.cache.Cache;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,9 +40,15 @@ public class PracticeServiceImpl implements PracticeService {
     private final ExamQuestionRepository examQuestionRepo;
 
     private final QuestionGenerationService questionGenerationService;
+
+    // ✅ giữ lại field này nếu project đang inject; nhưng submit sẽ KHÔNG dùng nữa
     private final GeminiResponsesClient responsesClient;
 
-    private final ObjectMapper om = new ObjectMapper();
+    // ✅ Inject ObjectMapper từ Spring (đừng new trong service)
+    private final ObjectMapper om;
+
+    // ✅ Cache preview để tránh gọi AI 2 lần (generatePreview -> start)
+    private final Cache<String, Object> practicePreviewCache;
 
     public PracticeServiceImpl(
             UserRepository userRepo,
@@ -51,7 +58,9 @@ public class PracticeServiceImpl implements PracticeService {
             QuestionRepository questionRepo,
             ExamQuestionRepository examQuestionRepo,
             QuestionGenerationService questionGenerationService,
-            GeminiResponsesClient responsesClient
+            GeminiResponsesClient responsesClient,
+            ObjectMapper om,
+            Cache<String, Object> practicePreviewCache
     ) {
         this.userRepo = userRepo;
         this.materialRepo = materialRepo;
@@ -61,6 +70,8 @@ public class PracticeServiceImpl implements PracticeService {
         this.examQuestionRepo = examQuestionRepo;
         this.questionGenerationService = questionGenerationService;
         this.responsesClient = responsesClient;
+        this.om = om;
+        this.practicePreviewCache = practicePreviewCache;
     }
 
     @Override
@@ -76,10 +87,16 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
         }
 
+        // ✅ AI request #1: chỉ gọi ở preview
         GenerateQuestionsResponse res =
                 questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
 
         validateGeneratedResponse(res, req.getNumberOfQuestions());
+
+        // ✅ cache + token (TTL do config)
+        String token = UUID.randomUUID().toString();
+        res.setPreviewToken(token);
+        practicePreviewCache.put(previewKey(email, token), res);
 
         return res;
     }
@@ -98,13 +115,26 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
         }
 
-        // 1) Generate questions
-        GenerateQuestionsResponse generated =
-                questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
+        // ✅ ưu tiên lấy từ cache để không gọi AI lần 2
+        GenerateQuestionsResponse generated = null;
+        String token = normalizeToken(req.getPreviewToken());
+        if (!token.isBlank()) {
+            generated = getCachedPreview(email, token);
+        }
+
+        // ✅ cache miss -> fallback gọi AI để flow không chết (nhưng sẽ tốn request)
+        if (generated == null) {
+            generated = questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
+        }
 
         validateGeneratedResponse(generated, req.getNumberOfQuestions());
 
-        // 2) Create Exam (PRACTICE)
+        // ✅ dùng token xong thì xoá cache để tránh reuse + tiết kiệm RAM
+        if (!token.isBlank()) {
+            practicePreviewCache.invalidate(previewKey(email, token));
+        }
+
+        // 3) Create Exam (PRACTICE)
         Exam exam = new Exam();
         exam.setUser(me);
         exam.setType(ExamType.PRACTICE);
@@ -113,7 +143,7 @@ public class PracticeServiceImpl implements PracticeService {
         exam.setCreatedAt(LocalDateTime.now());
         exam = examRepo.save(exam);
 
-        // 3) Save questions
+        // 4) Save questions
         for (GeneratedQuestionItemResponse item : generated.getQuestions()) {
             Question q = new Question();
             q.setMaterial(material);
@@ -129,7 +159,7 @@ public class PracticeServiceImpl implements PracticeService {
             examQuestionRepo.save(eq);
         }
 
-        // 4) Create attempt
+        // 5) Create attempt
         ExamAttempt attempt = new ExamAttempt();
         attempt.setUser(me);
         attempt.setExam(exam);
@@ -220,7 +250,6 @@ public class PracticeServiceImpl implements PracticeService {
 
         int total = examQuestions.size();
         int correct = 0;
-        List<String> wrongSummaries = new ArrayList<>();
 
         for (Question q : examQuestions) {
             String sel = selected.getOrDefault(q.getId(), "");
@@ -230,9 +259,6 @@ public class PracticeServiceImpl implements PracticeService {
 
             if (!sel.isBlank() && sel.equals(right)) {
                 correct++;
-            } else {
-                wrongSummaries.add("- " + safe(q.getContent()) +
-                        " (Đúng: " + right + ", Bạn chọn: " + (sel.isBlank() ? "Bỏ trống" : sel) + ")");
             }
         }
 
@@ -241,21 +267,14 @@ public class PracticeServiceImpl implements PracticeService {
         // update attempt
         attempt.setScore(score);
         attempt.setSubmitTime(LocalDateTime.now());
-        attempt.setStatus(ExamResult.SUBMITTED);
 
         int pass = exam.getPassScore() != null ? exam.getPassScore() : DEFAULT_PASS_SCORE;
         attempt.setStatus(score >= pass ? ExamResult.PASSED : ExamResult.FAILED);
 
         attemptRepo.save(attempt);
 
-        // AI feedback (Gemini)
-        String feedbackPrompt = buildFeedbackPrompt(score, correct, total, wrongSummaries);
-        String feedback;
-        try {
-            feedback = responsesClient.generateText(feedbackPrompt);
-        } catch (Exception e) {
-            feedback = "Bạn đã hoàn thành bài ôn tập. Hãy xem lại các câu sai và thử làm lại để cải thiện điểm nhé!";
-        }
+        // ✅ RULE-BASED feedback (KHÔNG gọi AI nữa)
+        String feedback = buildStaticFeedback(score);
 
         SubmitPracticeResponse res = new SubmitPracticeResponse();
         res.setScore(score);
@@ -308,12 +327,7 @@ public class PracticeServiceImpl implements PracticeService {
             item.setCorrectAnswer(right);
             item.setSelectedAnswer(sel.isBlank() ? "" : sel);
             item.setIsCorrect(isCorrect);
-
-            try {
-                item.setExplanation(q.getAnalysis() != null ? q.getAnalysis() : "");
-            } catch (Exception ignore) {
-                item.setExplanation("");
-            }
+            item.setExplanation(q.getAnalysis() != null ? q.getAnalysis() : "");
 
             items.add(item);
         }
@@ -336,7 +350,8 @@ public class PracticeServiceImpl implements PracticeService {
         if (req.getNumberOfQuestions() == null)
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
         if (req.getNumberOfQuestions() < 1 || req.getNumberOfQuestions() > MAX_QUESTIONS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be between 1 and " + MAX_QUESTIONS);
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "numberOfQuestions must be between 1 and " + MAX_QUESTIONS);
         }
         if (req.getDurationMinutes() != null && (req.getDurationMinutes() < 1 || req.getDurationMinutes() > 180)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "durationMinutes must be between 1 and 180");
@@ -348,7 +363,8 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI response is empty");
         }
         if (res.getQuestions().size() != expected) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI must generate exactly " + expected + " questions");
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+                    "AI must generate exactly " + expected + " questions");
         }
         for (GeneratedQuestionItemResponse item : res.getQuestions()) {
             validateGeneratedItem(item);
@@ -400,8 +416,7 @@ public class PracticeServiceImpl implements PracticeService {
     private Map<String, String> readOptionsJson(String optionsJson) {
         if (optionsJson == null || optionsJson.isBlank()) return Map.of();
         try {
-            return om.readValue(optionsJson, new TypeReference<Map<String, String>>() {
-            });
+            return om.readValue(optionsJson, new TypeReference<Map<String, String>>() {});
         } catch (Exception e) {
             return Map.of();
         }
@@ -418,8 +433,7 @@ public class PracticeServiceImpl implements PracticeService {
     private Map<Long, String> readSelectedAnswersJson(String json) {
         try {
             if (json == null || json.isBlank()) return new HashMap<>();
-            return om.readValue(json, new TypeReference<Map<Long, String>>() {
-            });
+            return om.readValue(json, new TypeReference<Map<Long, String>>() {});
         } catch (Exception e) {
             return new HashMap<>();
         }
@@ -429,32 +443,32 @@ public class PracticeServiceImpl implements PracticeService {
         return s == null ? "" : s.trim().toUpperCase(Locale.ROOT);
     }
 
-    private String safe(String s) {
-        if (s == null) return "";
-        String t = s.trim();
-        return t.length() > 140 ? t.substring(0, 140) + "..." : t;
+    private String normalizeToken(String s) {
+        return s == null ? "" : s.trim();
     }
 
-    private String buildFeedbackPrompt(int score, int correct, int total, List<String> wrongSummaries) {
-        String wrongBlock = wrongSummaries.isEmpty()
-                ? "Không có câu sai."
-                : String.join("\n", wrongSummaries);
+    private String previewKey(String email, String token) {
+        return "practice_preview:" + email + ":" + token;
+    }
 
-        return """
-                Bạn là trợ lý học tập. Hãy nhận xét ngắn gọn, tích cực và thực tế cho học viên dựa trên kết quả ôn tập.
-                
-                KẾT QUẢ:
-                - Điểm: %d/100
-                - Đúng: %d/%d
-                - Các câu sai:
-                %s
-                
-                YÊU CẦU:
-                - Viết 4-6 câu tiếng Việt
-                - Nêu 1-2 điểm mạnh
-                - Nêu 1-2 điểm cần cải thiện
-                - Gợi ý cách ôn lại (ngắn gọn, cụ thể)
-                - Không nhắc đến “AI”, không dài dòng
-                """.formatted(score, correct, total, wrongBlock);
+    // ✅ cache là Object, cast an toàn
+    private GenerateQuestionsResponse getCachedPreview(String email, String token) {
+        Object obj = practicePreviewCache.getIfPresent(previewKey(email, token));
+        if (obj instanceof GenerateQuestionsResponse res) {
+            return res;
+        }
+        return null;
+    }
+
+    // ✅ feedback rule-based để không tốn AI request
+    private String buildStaticFeedback(int score) {
+        if (score >= 85) {
+            return "Rất tốt! Bạn làm đúng phần lớn câu hỏi. Hãy xem lại các câu sai và ghi chú vì sao chọn nhầm để tránh lặp lại.";
+        } else if (score >= 70) {
+            return "Tốt! Bạn nắm khá ổn. Nên ôn lại các ý liên quan tới những câu sai và làm thêm 1 lượt để tăng độ chắc.";
+        } else if (score >= 50) {
+            return "Khá ổn, nhưng bạn còn nhầm một số điểm. Hãy xem lại các câu sai, đọc lại đoạn học liệu liên quan và làm lại ngay để củng cố.";
+        }
+        return "Bạn cần cải thiện thêm. Hãy xem lại học liệu theo từng mục nhỏ, làm lại với ít câu hơn, rồi tăng dần số câu để luyện chắc nền.";
     }
 }
