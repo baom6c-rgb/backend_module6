@@ -12,12 +12,11 @@ public class AdminUpdateUserRequest {
     private String fullName;
 
     @Email(message = "Invalid email")
-    @NotBlank(message = "Email is required")
     private String email;
 
-    @NotNull(message = "ClassId is required")
-    private Long classId;
+    @NotBlank(message = "RoleName is required")
+    private String roleName;
 
-    @NotNull(message = "ModuleId is required")
+    private Long classId;
     private Long moduleId;
 }
