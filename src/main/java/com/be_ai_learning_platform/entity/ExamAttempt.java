@@ -25,7 +25,13 @@ public class ExamAttempt {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "exam_id", nullable = false)
     private Exam exam;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "class_id")
+    private ClassEntity classroom; // Đổi tên để tránh trùng với phương thức getClass() của Java
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "module_id")
+    private LearningModule learningModule;
     private LocalDateTime startTime;
     private LocalDateTime submitTime;
     private Integer score;

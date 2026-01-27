@@ -2,17 +2,13 @@ package com.be_ai_learning_platform.entity;
 
 import com.be_ai_learning_platform.entity.enums.ExamType;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.NoArgsConstructor;
-import lombok.Setter;
+import lombok.*;
 
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "exam")
-@Getter // Thêm dòng này
-@Setter // Thêm dòng này
+@Data
 @NoArgsConstructor
 @AllArgsConstructor
 public class Exam {
@@ -29,7 +25,7 @@ public class Exam {
     private ExamType type;
 
     private Integer durationMinutes;
-    private Integer passScore = 50;
+    private Integer passScore = 75;
 
     private LocalDateTime createdAt = LocalDateTime.now();
 }
