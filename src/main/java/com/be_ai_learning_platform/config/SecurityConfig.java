@@ -52,7 +52,8 @@ public class SecurityConfig {
                                 "/admin/approve",
                                 "/error"
                         ).permitAll()
-
+                        // 🔐 THÊM DÒNG NÀY: Cho phép các API thi cử nếu đã login
+                        .requestMatchers("/api/exam-attempts/**").authenticated()
                         // 🔐 ADMIN
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
 

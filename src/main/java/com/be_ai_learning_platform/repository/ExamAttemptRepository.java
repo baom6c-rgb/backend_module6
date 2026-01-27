@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Optional;
 
 public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> {
@@ -70,5 +71,17 @@ public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> 
     where ea.id = :id and ea.user.id = :userId
 """)
     Optional<ExamAttempt> findByIdAndUserIdFetchExam(@Param("id") Long id, @Param("userId") Long userId);
+    List<ExamAttempt> findByUserIdOrderBySubmitTimeDesc(Long userId);
 
+    // Tính điểm trung bình cho dashboard
+    @Query("SELECT AVG(ea.score) FROM ExamAttempt ea WHERE ea.user.id = :userId")
+    Double getAverageScoreByUserId(Long userId);
+
+    // Đếm số bài đạt yêu cầu (score >= passScore của Exam)
+    @Query("SELECT COUNT(ea) FROM ExamAttempt ea WHERE ea.user.id = :userId AND ea.score >= ea.exam.passScore")
+    Long countPassedTests(Long userId);
+
+    // Sử dụng Native Query để ép buộc query vào bảng vật lý
+    @Query(value = "SELECT * FROM exam_attempt WHERE user_id = :userId ORDER BY submit_time DESC", nativeQuery = true)
+    List<ExamAttempt> findByUserIdNative(@Param("userId") Long userId);
 }
