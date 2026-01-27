@@ -141,8 +141,20 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
         }
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserExamAttemptDTO> getAllAttemptsForAdmin() {
+        // Sử dụng method JOIN FETCH để tối ưu hiệu năng
+        List<ExamAttempt> allAttempts = examAttemptRepository.findAllWithUserDetails();
+
+        return allAttempts.stream()
+                .map(this::convertToDTO) // Hàm convertToDTO bây giờ đã có studentName/Email
+                .collect(Collectors.toList());
+    }
+
     private UserExamAttemptDTO convertToDTO(ExamAttempt attempt) {
         Exam exam = attempt.getExam();
+        User user = attempt.getUser();
 
         // Lấy thông tin module và class từ ExamAttempt (không phải từ Exam)
         String moduleName = "N/A";
@@ -196,12 +208,14 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
         // Build DTO
         return UserExamAttemptDTO.builder()
                 .id(attempt.getId())
+                .studentName(user != null ? user.getFullName() : "N/A") // Lấy tên thật của user
+                .studentEmail(user != null ? user.getEmail() : "N/A")   // Lấy email
                 .name(examName)
                 .module(moduleName)
                 .className(className)
-                .date(attempt.getSubmitTime()) // Ngày submit
+                .date(attempt.getSubmitTime())
                 .score(attempt.getScore())
-                .totalScore(100) // Hoặc tính từ số câu hỏi * điểm mỗi câu
+                .totalScore(100)
                 .duration(duration)
                 .questions(totalQuestions)
                 .correctAnswers(correctAnswers)

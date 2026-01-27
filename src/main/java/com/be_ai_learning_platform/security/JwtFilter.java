@@ -60,12 +60,17 @@ public class JwtFilter extends OncePerRequestFilter {
         }
 
         String token = header.substring(7);
-        if (token.isBlank() || token.equals("null")) {
+        String email = null;
+        try {
+            email = jwtUtil.extractEmail(token);
+        } catch (Exception e) {
+            // Note: Thêm try-catch ở đây để nếu Token lỗi định dạng (400),
+            // nó sẽ không crash Filter mà chỉ đơn giản là không authenticate.
+            // Kết quả sẽ trả về 403 (Forbidden) từ SecurityConfig thay vì 400/500.
+            logger.error("JWT Error: " + e.getMessage());
             chain.doFilter(request, response);
             return;
         }
-
-        String email = jwtUtil.extractEmail(token);
 
         var userOpt = userRepository.findByEmail(email);
         if (userOpt.isEmpty()) {
