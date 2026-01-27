@@ -7,6 +7,7 @@ import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.ExamAttemptService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 
@@ -60,6 +61,15 @@ public class ExamAttemptController {
     @GetMapping("/{id}")
     public ResponseEntity<ExamAttempt> getDetail(@PathVariable Long id) {
         return ResponseEntity.ok(attemptService.getAttemptById(id));
+    }
+
+    /**
+     * Dành cho ADMIN: Xem toàn bộ lịch sử hệ thống
+     */
+    @GetMapping("/admin/all-attempts")
+    @PreAuthorize("hasRole('ADMIN')") // Bảo mật thêm ở tầng method
+    public ResponseEntity<List<UserExamAttemptDTO>> getAllAttempts() {
+        return ResponseEntity.ok(attemptService.getAllAttemptsForAdmin());
     }
 
     /**

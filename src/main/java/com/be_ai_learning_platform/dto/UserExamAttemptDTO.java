@@ -9,6 +9,8 @@ import java.time.LocalDateTime;
 @Builder
 public class UserExamAttemptDTO {
     private Long id;
+    private String studentName; // Thêm: Tên học viên
+    private String studentEmail; // Thêm: Email để phân biệt nếu trùng tên
     private String name;        // Tên bài thi (thường lấy từ Exam hoặc Module)
     private String module;      // Tên Module học tập
     private String className;   // Tên lớp học (nếu có)

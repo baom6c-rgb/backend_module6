@@ -84,4 +84,12 @@ public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> 
     // Sử dụng Native Query để ép buộc query vào bảng vật lý
     @Query(value = "SELECT * FROM exam_attempt WHERE user_id = :userId ORDER BY submit_time DESC", nativeQuery = true)
     List<ExamAttempt> findByUserIdNative(@Param("userId") Long userId);
+
+    @Query("SELECT ea FROM ExamAttempt ea " +
+            "JOIN FETCH ea.user " + // Lấy luôn thông tin User
+            "JOIN FETCH ea.exam " + // Lấy luôn thông tin Exam
+            "LEFT JOIN FETCH ea.learningModule " +
+            "LEFT JOIN FETCH ea.classroom " +
+            "ORDER BY ea.submitTime DESC")
+    List<ExamAttempt> findAllWithUserDetails();
 }

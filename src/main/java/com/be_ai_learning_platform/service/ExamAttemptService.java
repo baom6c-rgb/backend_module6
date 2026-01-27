@@ -15,4 +15,6 @@ public interface ExamAttemptService {
     ExamAttempt startExam(Long userId, Long examId);
 
     ExamAttempt submitExam(Long attemptId, Object answers);
+
+    List<UserExamAttemptDTO> getAllAttemptsForAdmin();
 }
