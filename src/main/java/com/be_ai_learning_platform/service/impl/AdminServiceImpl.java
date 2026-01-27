@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -71,8 +72,8 @@ public class AdminServiceImpl implements AdminService {
         LearningModule module = moduleRepository.findById(request.getModuleId())
                 .orElseThrow(() -> new RuntimeException("Không tìm thấy học phần"));
 
-        Role foundRole = roleRepository.findByName(request.getRoleName())
-                .orElseThrow(() -> new RuntimeException("Quyền " + request.getRoleName() + " không tồn tại"));
+        Role foundRole = roleRepository.findByName(roleName)
+                .orElseThrow(() -> new RuntimeException("Quyền " + roleName + " không tồn tại"));
 
         User user = new User();
         user.setEmail(request.getEmail().trim());
@@ -94,6 +95,12 @@ public class AdminServiceImpl implements AdminService {
         userRole.setUser(savedUser);
         userRole.setRole(foundRole);
         userRoleRepository.save(userRole);
+
+        // đảm bảo list trong entity có (tránh mapping DTO đọc null)
+        if (savedUser.getUserRoles() == null) {
+            savedUser.setUserRoles(new ArrayList<>());
+        }
+        savedUser.getUserRoles().add(userRole);
 
         return toAdminResponse(savedUser);
     }
@@ -129,6 +136,12 @@ public class AdminServiceImpl implements AdminService {
         userRole.setRole(adminRole);
         userRoleRepository.save(userRole);
 
+        // đảm bảo list trong entity có (tránh mapping DTO đọc null)
+        if (savedUser.getUserRoles() == null) {
+            savedUser.setUserRoles(new ArrayList<>());
+        }
+        savedUser.getUserRoles().add(userRole);
+
         return toAdminResponse(savedUser);
     }
 
@@ -144,7 +157,6 @@ public class AdminServiceImpl implements AdminService {
     // =========================================================
     // Approvals (Pending → Approve/Reject)
     // =========================================================
-
     @Override
     @Transactional(readOnly = true)
     public List<AdminResponse> getPendingApprovals() {
@@ -182,7 +194,6 @@ public class AdminServiceImpl implements AdminService {
     // =========================================================
     // US6 - Students lists + block/unblock
     // =========================================================
-
     @Override
     @Transactional(readOnly = true)
     public List<AdminResponse> getActiveStudents() {
@@ -243,7 +254,6 @@ public class AdminServiceImpl implements AdminService {
     // =========================================================
     // US5 - Admin edit user
     // =========================================================
-
     @Override
     @Transactional(readOnly = true)
     public AdminUserDetailResponse getUserDetail(Long userId) {
@@ -251,29 +261,74 @@ public class AdminServiceImpl implements AdminService {
         return toAdminUserDetailResponse(user);
     }
 
+    /**
+     * ✅ UPDATE USER (FIXED theo đoạn mày gửi)
+     * - Email: KHÔNG cho chỉnh
+     * - Role: bắt buộc
+     * - Nếu ADMIN: class/module = null
+     * - Nếu không phải ADMIN: bắt buộc classId/moduleId
+     * - Fix PUT trả role cũ: flush + clear + re-fetch
+     */
     @Override
     public AdminUserDetailResponse updateUser(Long userId, AdminUpdateUserRequest request) {
         User user = getUser(userId);
 
-        // 1) email unique
-        String newEmail = request.getEmail().trim();
-        if (!user.getEmail().equalsIgnoreCase(newEmail) && userRepository.existsByEmail(newEmail)) {
-            throw new RuntimeException("Email already exists");
+        // 1) update basic fields (email không cho chỉnh)
+        if (request.getFullName() == null || request.getFullName().trim().isEmpty()) {
+            throw new RuntimeException("Full name is required");
+        }
+        user.setFullName(request.getFullName().trim());
+
+        // 2) update role (bắt buộc)
+        String roleName = request.getRoleName() == null ? "" : request.getRoleName().trim().toUpperCase();
+        if (roleName.isEmpty()) {
+            throw new RuntimeException("RoleName is required");
         }
 
-        // 2) update basic fields
-        user.setFullName(request.getFullName().trim());
-        user.setEmail(newEmail);
+        Role foundRole = roleRepository.findByName(roleName)
+                .orElseThrow(() -> new RuntimeException("Quyền " + roleName + " không tồn tại"));
 
-        // 3) update class
-        ClassEntity clazz = classRepository.findById(request.getClassId())
-                .orElseThrow(() -> new RuntimeException("Class not found"));
-        user.setClassName(clazz);
+        // 2.1) set/replace role (assume 1 role per user)
+        UserRole userRole;
+        if (user.getUserRoles() != null && !user.getUserRoles().isEmpty()) {
+            userRole = user.getUserRoles().get(0);
+            userRole.setRole(foundRole);
+            userRoleRepository.save(userRole);
+        } else {
+            userRole = new UserRole();
+            userRole.setUser(user);
+            userRole.setRole(foundRole);
+            userRoleRepository.save(userRole);
 
-        // 4) update module/model
-        LearningModule module = moduleRepository.findById(request.getModuleId())
-                .orElseThrow(() -> new RuntimeException("Module not found"));
-        user.setLearningModule(module);
+            // đảm bảo list trong entity có (tránh toAdminResponse/toAdminUserDetailResponse đọc null)
+            if (user.getUserRoles() == null) {
+                user.setUserRoles(new ArrayList<>());
+            }
+            user.getUserRoles().add(userRole);
+        }
+
+        // 3) update class/module theo role
+        if ("ADMIN".equals(roleName)) {
+            // ✅ ADMIN: allow NULL in DB for class/module
+            user.setClassName(null);
+            user.setLearningModule(null);
+        } else {
+            // ✅ STUDENT/others: require classId/moduleId
+            if (request.getClassId() == null) {
+                throw new RuntimeException("ClassId is required");
+            }
+            if (request.getModuleId() == null) {
+                throw new RuntimeException("ModuleId is required");
+            }
+
+            ClassEntity clazz = classRepository.findById(request.getClassId())
+                    .orElseThrow(() -> new RuntimeException("Class not found"));
+            user.setClassName(clazz);
+
+            LearningModule module = moduleRepository.findById(request.getModuleId())
+                    .orElseThrow(() -> new RuntimeException("Module not found"));
+            user.setLearningModule(module);
+        }
 
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
@@ -289,7 +344,6 @@ public class AdminServiceImpl implements AdminService {
     // =========================================================
     // Options (dropdown)
     // =========================================================
-
     @Override
     @Transactional(readOnly = true)
     public List<OptionResponse> getRoleOptions() {
@@ -320,7 +374,6 @@ public class AdminServiceImpl implements AdminService {
     // =========================================================
     // Helpers
     // =========================================================
-
     private User getUser(Long id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("User not found"));
