@@ -1,15 +1,13 @@
 package com.be_ai_learning_platform.controller;
 
 import com.be_ai_learning_platform.dto.UserUpdateDTO;
-import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
 import com.be_ai_learning_platform.dto.request.StudentUpdateProfileRequest;
+import com.be_ai_learning_platform.dto.request.ChangePasswordRequest;
 import com.be_ai_learning_platform.dto.response.StudentProfileResponse;
 import com.be_ai_learning_platform.dto.response.UserStatusResponse;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.service.UserService;
 import jakarta.validation.Valid;
-import com.be_ai_learning_platform.entity.User;
-import com.be_ai_learning_platform.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -60,6 +58,25 @@ public class UserController {
     ) {
         String email = authentication.getName();
         return ResponseEntity.ok(userService.updateMyAvatarByEmail(email, file));
+    }
+
+    // ======================= ✅ NEW: Change password =======================
+    @PutMapping("/me/password")
+    public ResponseEntity<?> changeMyPassword(
+            Authentication authentication,
+            @Valid @RequestBody ChangePasswordRequest request
+    ) {
+        try {
+            String email = authentication.getName();
+            userService.changeMyPasswordByEmail(email, request);
+            return ResponseEntity.ok("Đổi mật khẩu thành công");
+        } catch (Exception e) {
+            // ❗ trả string để FE toast được, và tránh 401
+            String msg = (e.getMessage() != null && !e.getMessage().isBlank())
+                    ? e.getMessage()
+                    : "Đổi mật khẩu thất bại";
+            return ResponseEntity.badRequest().body(msg);
+        }
     }
 
     // ===== test only - remove later =====

@@ -1,8 +1,8 @@
 package com.be_ai_learning_platform.service;
 
 import com.be_ai_learning_platform.dto.UserUpdateDTO;
-import com.be_ai_learning_platform.dto.request.CompleteProfileRequest;
 import com.be_ai_learning_platform.dto.request.StudentUpdateProfileRequest;
+import com.be_ai_learning_platform.dto.request.ChangePasswordRequest;
 import com.be_ai_learning_platform.dto.response.UserStatusResponse;
 import com.be_ai_learning_platform.dto.response.StudentProfileResponse;
 import com.be_ai_learning_platform.entity.User;
@@ -33,4 +33,8 @@ public interface UserService {
 
     @Transactional
     StudentProfileResponse updateMyAvatarByEmail(String email, MultipartFile file);
+
+    // ✅ NEW: Change password (user logged-in)
+    @Transactional
+    void changeMyPasswordByEmail(String email, ChangePasswordRequest request);
 }
