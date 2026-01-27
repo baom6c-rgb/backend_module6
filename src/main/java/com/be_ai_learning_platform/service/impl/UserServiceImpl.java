@@ -2,6 +2,7 @@ package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.dto.UserUpdateDTO;
 import com.be_ai_learning_platform.dto.request.StudentUpdateProfileRequest;
+import com.be_ai_learning_platform.dto.request.ChangePasswordRequest;
 import com.be_ai_learning_platform.dto.response.StudentProfileResponse;
 import com.be_ai_learning_platform.dto.response.UserStatusResponse;
 import com.be_ai_learning_platform.entity.ClassEntity;
@@ -14,6 +15,7 @@ import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.UserService;
 import com.be_ai_learning_platform.service.mail.MailService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +32,9 @@ public class UserServiceImpl implements UserService {
     private final ModuleRepository moduleRepository;
     private final MailService mailService;
     private final com.be_ai_learning_platform.service.AvatarStorageService avatarStorageService;
+
+    // ✅ NEW
+    private final PasswordEncoder passwordEncoder;
 
     // ====================== US2: polling status ======================
     @Override
@@ -180,5 +185,41 @@ public class UserServiceImpl implements UserService {
 
         user.setUpdatedAt(LocalDateTime.now());
         return userRepository.save(user);
+    }
+
+    // ======================= ✅ NEW: CHANGE PASSWORD =======================
+    @Override
+    public void changeMyPasswordByEmail(String email, ChangePasswordRequest request) {
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        if (user.getStatus() != UserStatus.ACTIVE) {
+            throw new RuntimeException("User is not active");
+        }
+
+        String oldPw = request.getOldPassword() != null ? request.getOldPassword().trim() : "";
+        String newPw = request.getNewPassword() != null ? request.getNewPassword().trim() : "";
+
+        if (oldPw.isEmpty() || newPw.isEmpty()) {
+            throw new RuntimeException("Vui lòng nhập đầy đủ mật khẩu cũ và mật khẩu mới");
+        }
+        if (newPw.length() < 6) {
+            throw new RuntimeException("Mật khẩu mới tối thiểu 6 ký tự");
+        }
+
+        // account google có thể chưa có passwordHash
+        if (user.getPasswordHash() == null || user.getPasswordHash().isBlank()) {
+            throw new RuntimeException("Tài khoản này chưa thiết lập mật khẩu. Vui lòng dùng chức năng Quên mật khẩu để tạo mật khẩu mới.");
+        }
+
+        boolean match = passwordEncoder.matches(oldPw, user.getPasswordHash());
+        if (!match) {
+            // ❗ không dùng 401 để tránh FE interceptor logout
+            throw new RuntimeException("Mật khẩu cũ không đúng");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(newPw));
+        user.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(user);
     }
 }
