@@ -205,6 +205,8 @@ public class PracticeServiceImpl implements PracticeService {
         ExamAttempt attempt = new ExamAttempt();
         attempt.setUser(me);
         attempt.setExam(exam);
+        attempt.setClassroom(me.getClassName());
+        attempt.setLearningModule(me.getLearningModule());
         attempt.setStartTime(LocalDateTime.now());
         attempt.setStatus(ExamResult.IN_PROGRESS);
         attempt = attemptRepo.save(attempt);
