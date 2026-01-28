@@ -21,9 +21,8 @@ public class GeminiStructuredClient {
     }
 
     /**
-     * REST v1 generateContent không support responseSchema/responseMimeType như payload cũ.
+     * REST v1 generateContent không support responseSchema/responseMimeType.
      * -> Ép JSON bằng prompt contract + sanitize output.
-     * Service phía trên vẫn validate (QuestionValidator) nên giữ nguyên nghiệp vụ.
      */
     public String generateJsonBySchema(String prompt, int numberOfQuestions) {
         if (prompt == null || prompt.isBlank()) {
@@ -43,10 +42,10 @@ public class GeminiStructuredClient {
                         Map.of("role", "user", "parts", List.of(Map.of("text", finalPrompt)))
                 ),
                 "generationConfig", Map.of(
-                        // ép output ổn định hơn để dễ parse JSON
                         "temperature", 0,
                         "topP", 0.1,
-                        "maxOutputTokens", 4096
+                        // ✅ giảm output để hạn chế bị cắt JSON
+                        "maxOutputTokens", 8192
                 )
         );
 
@@ -81,15 +80,39 @@ public class GeminiStructuredClient {
 CHỈ TRẢ VỀ JSON THUẦN – KHÔNG markdown, KHÔNG giải thích.
 
 BẮT BUỘC trả JSON ĐẦY ĐỦ, KHÔNG ĐƯỢC CẮT GIỮA CHỪNG.
+CHỈ 1 JSON object duy nhất.
 
-FORMAT CHÍNH XÁC:
-{"questions":[{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correctAnswer":"A"}]}
+FORMAT (bắt buộc đúng key):
+{
+  "questions": [
+    {
+      "questionType": "MCQ",
+      "question": "...",
+      "options": { "A": "...", "B": "...", "C": "...", "D": "..." },
+      "correctAnswer": "A",
+      "analysis": "..."
+    },
+    {
+      "questionType": "ESSAY",
+      "question": "...",
+      "sampleAnswer": "...",
+      "keywords": ["...","...","..."],
+      "maxScore": 10
+    }
+  ]
+}
 
 RULES:
 - questions có ĐÚNG %d phần tử
-- options luôn có A,B,C,D (string, không rỗng)
-- correctAnswer ∈ {A,B,C,D}
-- Nếu KHÔNG thể trả JSON đầy đủ → KHÔNG trả gì
+- questionType ∈ {"MCQ","ESSAY"}
+- MCQ:
+  - options luôn có A,B,C,D (string không rỗng)
+  - correctAnswer ∈ {A,B,C,D}
+  - analysis ngắn gọn 1-2 câu
+- ESSAY:
+  - sampleAnswer 2-4 câu
+  - keywords >= 3
+  - maxScore = 10
 - KẾT THÚC OUTPUT bằng dấu }
 """.formatted(n);
     }
