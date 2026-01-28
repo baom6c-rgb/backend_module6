@@ -5,8 +5,14 @@ import java.util.List;
 public class AttemptReviewResponse {
     private Long attemptId;
     private Integer score;          // 0-100
+
     private Integer totalQuestions;
+
+    // MCQ correct count (optional but useful)
     private Integer correctCount;
+
+    // NEW
+    private String aiFeedback;
 
     private List<AttemptReviewItemResponse> items;
 
@@ -21,6 +27,9 @@ public class AttemptReviewResponse {
 
     public Integer getCorrectCount() { return correctCount; }
     public void setCorrectCount(Integer correctCount) { this.correctCount = correctCount; }
+
+    public String getAiFeedback() { return aiFeedback; }
+    public void setAiFeedback(String aiFeedback) { this.aiFeedback = aiFeedback; }
 
     public List<AttemptReviewItemResponse> getItems() { return items; }
     public void setItems(List<AttemptReviewItemResponse> items) { this.items = items; }

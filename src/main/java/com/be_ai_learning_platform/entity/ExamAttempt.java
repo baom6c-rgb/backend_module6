@@ -25,21 +25,28 @@ public class ExamAttempt {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "exam_id", nullable = false)
     private Exam exam;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "class_id")
-    private ClassEntity classroom; // Đổi tên để tránh trùng với phương thức getClass() của Java
+    private ClassEntity classroom;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "module_id")
     private LearningModule learningModule;
+
     private LocalDateTime startTime;
     private LocalDateTime submitTime;
     private Integer score;
 
     @Enumerated(EnumType.STRING)
     private ExamResult status;
-    // ✅ NEW: lưu đáp án user chọn để review
+
     @Lob
     @Column(name = "answers_json", columnDefinition = "LONGTEXT")
     private String answersJson;
+
+    // ✅ NEW: AI nhận xét tổng sau khi nộp
+    @Lob
+    @Column(name = "ai_feedback", columnDefinition = "LONGTEXT")
+    private String aiFeedback;
 }
