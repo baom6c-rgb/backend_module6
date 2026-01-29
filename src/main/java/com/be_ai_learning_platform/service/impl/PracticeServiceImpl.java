@@ -33,6 +33,11 @@ public class PracticeServiceImpl implements PracticeService {
 
     private static final int MAX_AI_FEEDBACK_CHARS = 3500;
 
+    // ✅ Tổng điểm theo loại câu hỏi
+    private static final int TOTAL_SCORE = 100;
+    private static final int MCQ_TOTAL_POINTS = 70;
+    private static final int ESSAY_TOTAL_POINTS = 30;
+
     private final UserRepository userRepo;
     private final LearningMaterialRepository materialRepo;
 
@@ -145,26 +150,6 @@ public class PracticeServiceImpl implements PracticeService {
         // ✅ dùng xong xoá cache để tránh reuse
         practicePreviewCache.invalidate(previewKey(email, token));
 
-        /*
-        // ============ OPTION: nếu m muốn token optional (không khuyến nghị) ============
-        GenerateQuestionsResponse generated = null;
-
-        String token = normalizeToken(req.getPreviewToken());
-        if (!token.isBlank()) {
-            generated = getCachedPreview(email, token);
-        }
-        if (generated == null) {
-            generated = questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
-        }
-
-        validateGeneratedResponse(generated, req.getNumberOfQuestions());
-
-        if (!token.isBlank()) {
-            practicePreviewCache.invalidate(previewKey(email, token));
-        }
-        // ============================================================================
-        */
-
         Exam exam = new Exam();
         exam.setUser(me);
         exam.setType(ExamType.PRACTICE);
@@ -253,7 +238,7 @@ public class PracticeServiceImpl implements PracticeService {
     }
 
     // =========================
-    // Submit: grade (MCQ + ESSAY AI 1-10) + AI feedback tổng
+    // Submit: tổng điểm = 100, chia 70 MCQ / 30 ESSAY theo SỐ CÂU
     // =========================
     @Transactional
     @Override
@@ -286,6 +271,7 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Exam has no questions");
         }
 
+        // ✅ Map answer theo questionId
         Map<Long, SubmitPracticeRequest.AnswerItem> answerByQid = req.getAnswers().stream()
                 .filter(a -> a.getQuestionId() != null)
                 .collect(Collectors.toMap(
@@ -293,6 +279,25 @@ public class PracticeServiceImpl implements PracticeService {
                         a -> a,
                         (a, b) -> b
                 ));
+
+        // ✅ Count số câu theo loại
+        List<Question> mcqQuestions = examQuestions.stream()
+                .filter(q -> q.getQuestionType() == QuestionType.MCQ)
+                .toList();
+        List<Question> essayQuestions = examQuestions.stream()
+                .filter(q -> q.getQuestionType() == QuestionType.ESSAY)
+                .toList();
+
+        int mcqCount = mcqQuestions.size();
+        int essayCount = essayQuestions.size();
+
+        // ✅ Allocate điểm nguyên theo số câu để tổng đúng 70/30 tuyệt đối
+        // Nếu thiếu 1 loại: loại còn lại ăn full 100
+        int mcqBudget = (mcqCount > 0 && essayCount > 0) ? MCQ_TOTAL_POINTS : (mcqCount > 0 ? TOTAL_SCORE : 0);
+        int essayBudget = (mcqCount > 0 && essayCount > 0) ? ESSAY_TOTAL_POINTS : (essayCount > 0 ? TOTAL_SCORE : 0);
+
+        Map<Long, Integer> mcqMaxPointsByQid = allocatePointsByQuestionId(mcqQuestions, mcqBudget);
+        Map<Long, Integer> essayMaxPointsByQid = allocatePointsByQuestionId(essayQuestions, essayBudget);
 
         List<AnswerResult> results = new ArrayList<>();
 
@@ -309,8 +314,8 @@ public class PracticeServiceImpl implements PracticeService {
                 String right = normalizeChoice(q.getCorrectAnswer());
                 boolean isCorrect = !sel.isBlank() && sel.equals(right);
 
-                int maxScore = 1;
-                int score = isCorrect ? 1 : 0;
+                int maxScore = Math.max(0, mcqMaxPointsByQid.getOrDefault(q.getId(), 0));
+                int score = isCorrect ? maxScore : 0;
 
                 results.add(AnswerResult.forMcq(
                         q.getId(),
@@ -325,26 +330,29 @@ public class PracticeServiceImpl implements PracticeService {
                 totalMax += maxScore;
 
             } else {
+                // ESSAY
                 String textAnswer = ans != null ? safeTrim(ans.getTextAnswer(), 5000) : "";
                 Rubric rubric = readRubric(q.getAnalysis(), q.getCorrectAnswer());
 
-                // requirement: AI chấm thang 1-10 cho ESSAY
-                rubric.maxScore = 10;
-                int maxScore = 10;
+                int maxScore = Math.max(0, essayMaxPointsByQid.getOrDefault(q.getId(), 0));
 
-                int score;
+                int aiScore10; // 1..10
                 String perQuestionFeedback;
 
                 try {
                     AiEssayGrade g = gradeEssayByAi(q, textAnswer, rubric);
-                    score = g.score; // 1..10
+                    aiScore10 = g.score; // 1..10
                     perQuestionFeedback = buildEssayFeedbackText(g);
                 } catch (Exception aiErr) {
-                    // fallback rule-based nếu AI lỗi/quota/parse fail
+                    // fallback rule-based
                     EssayScore fb = scoreEssay(textAnswer, rubric);
-                    score = Math.max(0, Math.min(fb.score, 10));
+                    aiScore10 = Math.max(1, Math.min(fb.score, 10));
                     perQuestionFeedback = (fb.feedback == null ? "" : fb.feedback) + " (fallback: AI tạm lỗi)";
                 }
+
+                // ✅ Quy đổi điểm AI (1..10) -> thang điểm ESSAY của câu (chia theo số câu)
+                int score = (int) Math.round((aiScore10 / 10.0) * maxScore);
+                score = Math.max(0, Math.min(score, maxScore));
 
                 results.add(AnswerResult.forEssay(
                         q.getId(),
@@ -360,6 +368,8 @@ public class PracticeServiceImpl implements PracticeService {
             }
         }
 
+        // ✅ totalMax sẽ là 100 (nếu có câu hỏi)
+        // scorePct = điểm tổng / 100 * 100 => chính là totalEarned, nhưng giữ công thức để an toàn
         int scorePct = (int) Math.round((totalEarned * 100.0) / Math.max(totalMax, 1));
 
         attempt.setAnswersJson(writeAnswersJson(results));
@@ -370,17 +380,14 @@ public class PracticeServiceImpl implements PracticeService {
         attempt.setStatus(scorePct >= pass ? ExamResult.PASSED : ExamResult.FAILED);
 
         // AI feedback tổng (sau khi grade)
-        // AI feedback tổng (sau khi grade)
         String aiFeedback = "";
         try {
             String prompt = buildAiFeedbackPrompt(examQuestions, results, scorePct);
             aiFeedback = safeTrim(responsesClient.generateText(prompt), MAX_AI_FEEDBACK_CHARS);
         } catch (Exception e) {
-            // ✅ log để debug (quota/timeout/key/model...)
             e.printStackTrace();
         }
 
-// ✅ fallback để FE luôn có nội dung
         if (aiFeedback == null || aiFeedback.isBlank()) {
             aiFeedback = """
 AI feedback tạm thời chưa sẵn sàng (có thể do quota/timeout).
@@ -466,7 +473,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
                 item.setIsCorrect(isCorrect);
 
                 item.setScore(ar != null ? ar.score : 0);
-                item.setMaxScore(ar != null ? ar.maxScore : 1);
+                item.setMaxScore(ar != null ? ar.maxScore : 0);
                 item.setFeedback(ar != null ? ar.feedback : "");
 
             } else {
@@ -477,11 +484,11 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
                 item.setSampleAnswer(rubric.sampleAnswer);
 
                 int score = ar != null ? ar.score : 0;
-                int max = ar != null ? ar.maxScore : rubric.maxScore;
+                int max = ar != null ? ar.maxScore : 0;
 
                 item.setScore(score);
                 item.setMaxScore(max);
-                item.setIsCorrect(score >= max);
+                item.setIsCorrect(max > 0 && score >= max); // giữ nguyên: perfect mới "đúng"
                 item.setFeedback(ar != null ? ar.feedback : "");
             }
 
@@ -660,7 +667,8 @@ Bài làm học viên: %s
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sampleAnswer", safeTrim(sampleAnswer, 2000));
         data.put("keywords", keywords == null ? List.of() : keywords);
-        data.put("maxScore", maxScore == null ? 10 : maxScore);
+        // maxScore trong rubric giữ 10 (scale AI), điểm thật chia theo số câu sẽ tính ở submit()
+        data.put("maxScore", 10);
         try {
             return om.writeValueAsString(data);
         } catch (Exception e) {
@@ -686,7 +694,7 @@ Bài làm học viên: %s
         }
     }
 
-    // fallback rule-based
+    // fallback rule-based (trả score 0..10)
     private EssayScore scoreEssay(String answer, Rubric rubric) {
         String a = answer == null ? "" : answer.trim();
         if (a.isBlank()) {
@@ -695,7 +703,7 @@ Bài làm học viên: %s
 
         List<String> kws = rubric.keywords == null ? List.of() : rubric.keywords;
         if (kws.isEmpty()) {
-            int s = Math.max(1, (int) Math.round(rubric.maxScore * 0.5));
+            int s = 5;
             return new EssayScore(s, "Có trả lời nhưng rubric chưa đủ rõ, hệ thống chấm tạm theo mức trung bình.");
         }
 
@@ -711,13 +719,13 @@ Bài làm học viên: %s
         }
 
         double ratio = hit * 1.0 / Math.max(kws.size(), 1);
-        int score = (int) Math.round(ratio * rubric.maxScore);
+        int score10 = (int) Math.round(ratio * 10);
 
         String fb;
         if (missing.isEmpty()) fb = "Tốt ✅ Đủ ý chính theo rubric.";
         else fb = "Thiếu ý: " + String.join(", ", missing);
 
-        return new EssayScore(score, fb);
+        return new EssayScore(Math.max(0, Math.min(score10, 10)), fb);
     }
 
     private String writeAnswersJson(List<AnswerResult> results) {
@@ -773,7 +781,7 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
 
             sb.append("- Chấm: ").append(ar != null ? ar.score : 0)
                     .append("/")
-                    .append(ar != null ? ar.maxScore : 1)
+                    .append(ar != null ? ar.maxScore : 0)
                     .append("\n\n");
         }
         return sb.toString();
@@ -859,5 +867,24 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         } catch (Exception e) {
             return Map.of();
         }
+    }
+
+    /**
+     * ✅ Chia điểm nguyên theo số câu, đảm bảo tổng đúng tuyệt đối.
+     * Ví dụ total=70, count=6 -> [12,12,12,12,11,11] (tổng=70)
+     */
+    private Map<Long, Integer> allocatePointsByQuestionId(List<Question> questions, int totalPoints) {
+        Map<Long, Integer> map = new HashMap<>();
+        if (questions == null || questions.isEmpty() || totalPoints <= 0) return map;
+
+        int count = questions.size();
+        int base = totalPoints / count;
+        int rem = totalPoints % count;
+
+        for (int i = 0; i < count; i++) {
+            int pts = base + (i < rem ? 1 : 0);
+            map.put(questions.get(i).getId(), pts);
+        }
+        return map;
     }
 }
