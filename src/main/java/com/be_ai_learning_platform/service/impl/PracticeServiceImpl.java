@@ -1,8 +1,7 @@
 package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.ai.GeminiResponsesClient;
-import com.be_ai_learning_platform.dto.request.PracticeGenerateRequest;
-import com.be_ai_learning_platform.dto.request.SubmitPracticeRequest;
+import com.be_ai_learning_platform.dto.request.*;
 import com.be_ai_learning_platform.dto.response.*;
 import com.be_ai_learning_platform.entity.*;
 import com.be_ai_learning_platform.entity.enums.ExamResult;
@@ -16,6 +15,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -26,10 +26,6 @@ import java.util.stream.Collectors;
 
 @Service
 public class PracticeServiceImpl implements PracticeService {
-
-    private static final int DEFAULT_DURATION_MINUTES = 15;
-    private static final int DEFAULT_PASS_SCORE = 50;
-    private static final int MAX_QUESTIONS = 20;
 
     private static final int MAX_AI_FEEDBACK_CHARS = 3500;
 
@@ -50,7 +46,18 @@ public class PracticeServiceImpl implements PracticeService {
 
     private final GeminiResponsesClient responsesClient;
     private final ObjectMapper om;
-    private final Cache<String, Object> practicePreviewCache;
+    private final Cache<String, Object> practiceSessionCache;
+
+    // ===== configurable (application.properties) =====
+    private final int passScore;
+    private final int maxQuestions;
+
+    private final int durationBaseMinutes;
+    private final int durationPerQuestionMinutes;
+    private final int durationMinMinutes;
+    private final int durationMaxMinutes;
+
+    private final int feedbackMaxBullets;
 
     public PracticeServiceImpl(
             UserRepository userRepo,
@@ -62,7 +69,14 @@ public class PracticeServiceImpl implements PracticeService {
             QuestionGenerationService questionGenerationService,
             GeminiResponsesClient responsesClient,
             ObjectMapper om,
-            Cache<String, Object> practicePreviewCache
+            Cache<String, Object> practiceSessionCache,
+            @Value("${ai.practice.pass-score:80}") int passScore,
+            @Value("${ai.practice.max-questions:20}") int maxQuestions,
+            @Value("${ai.practice.duration.base-minutes:3}") int durationBaseMinutes,
+            @Value("${ai.practice.duration.per-question-minutes:2}") int durationPerQuestionMinutes,
+            @Value("${ai.practice.duration.min-minutes:10}") int durationMinMinutes,
+            @Value("${ai.practice.duration.max-minutes:45}") int durationMaxMinutes,
+            @Value("${ai.practice.feedback.max-bullets:8}") int feedbackMaxBullets
     ) {
         this.userRepo = userRepo;
         this.materialRepo = materialRepo;
@@ -73,7 +87,15 @@ public class PracticeServiceImpl implements PracticeService {
         this.questionGenerationService = questionGenerationService;
         this.responsesClient = responsesClient;
         this.om = om;
-        this.practicePreviewCache = practicePreviewCache;
+        this.practiceSessionCache = practiceSessionCache;
+
+        this.passScore = passScore;
+        this.maxQuestions = maxQuestions;
+        this.durationBaseMinutes = durationBaseMinutes;
+        this.durationPerQuestionMinutes = durationPerQuestionMinutes;
+        this.durationMinMinutes = durationMinMinutes;
+        this.durationMaxMinutes = durationMaxMinutes;
+        this.feedbackMaxBullets = feedbackMaxBullets;
     }
 
     // =========================
@@ -112,7 +134,7 @@ public class PracticeServiceImpl implements PracticeService {
         generated.setPreviewToken(token);
 
         // ✅ cache theo token mới
-        practicePreviewCache.put(previewKey(email, token), generated);
+        practiceSessionCache.put(previewKey(email, token), generated);
 
         return generated;
     }
@@ -148,13 +170,13 @@ public class PracticeServiceImpl implements PracticeService {
         validateGeneratedResponse(generated, req.getNumberOfQuestions());
 
         // ✅ dùng xong xoá cache để tránh reuse
-        practicePreviewCache.invalidate(previewKey(email, token));
+        practiceSessionCache.invalidate(previewKey(email, token));
 
         Exam exam = new Exam();
         exam.setUser(me);
         exam.setType(ExamType.PRACTICE);
-        exam.setDurationMinutes(req.getDurationMinutes() != null ? req.getDurationMinutes() : DEFAULT_DURATION_MINUTES);
-        exam.setPassScore(DEFAULT_PASS_SCORE);
+        exam.setDurationMinutes(req.getDurationMinutes() != null ? req.getDurationMinutes() : computeDurationMinutes(req.getNumberOfQuestions()));
+        exam.setPassScore(passScore);
         exam.setCreatedAt(LocalDateTime.now());
         exam = examRepo.save(exam);
 
@@ -173,8 +195,8 @@ public class PracticeServiceImpl implements PracticeService {
                 q.setOptionsJson(writeOptionsJson(item.getOptions()));
                 q.setAnalysis(safeTrim(item.getAnalysis(), 2000));
             } else {
-                // ESSAY: store sampleAnswer in correctAnswer, rubric in analysis as JSON
-                q.setCorrectAnswer(safeTrim(item.getSampleAnswer(), 2000));
+                // ESSAY: không lưu sampleAnswer vào correctAnswer (tránh lỗi truncate). Lưu rubric vào analysis.
+                q.setCorrectAnswer(null);
                 q.setOptionsJson(null);
                 q.setAnalysis(writeRubricJson(item.getSampleAnswer(), item.getKeywords(), item.getMaxScore()));
             }
@@ -336,21 +358,21 @@ public class PracticeServiceImpl implements PracticeService {
 
                 int maxScore = Math.max(0, essayMaxPointsByQid.getOrDefault(q.getId(), 0));
 
-                int aiScore10; // 1..10
+                int aiScore10; // 0..10
                 String perQuestionFeedback;
 
                 try {
                     AiEssayGrade g = gradeEssayByAi(q, textAnswer, rubric);
-                    aiScore10 = g.score; // 1..10
+                    aiScore10 = g.score; // 0..10
                     perQuestionFeedback = buildEssayFeedbackText(g);
                 } catch (Exception aiErr) {
                     // fallback rule-based
                     EssayScore fb = scoreEssay(textAnswer, rubric);
-                    aiScore10 = Math.max(1, Math.min(fb.score, 10));
+                    aiScore10 = Math.max(0, Math.min(fb.score, 10));
                     perQuestionFeedback = (fb.feedback == null ? "" : fb.feedback) + " (fallback: AI tạm lỗi)";
                 }
 
-                // ✅ Quy đổi điểm AI (1..10) -> thang điểm ESSAY của câu (chia theo số câu)
+                // ✅ Quy đổi điểm AI (0..10) -> thang điểm ESSAY của câu (chia theo số câu)
                 int score = (int) Math.round((aiScore10 / 10.0) * maxScore);
                 score = Math.max(0, Math.min(score, maxScore));
 
@@ -368,15 +390,13 @@ public class PracticeServiceImpl implements PracticeService {
             }
         }
 
-        // ✅ totalMax sẽ là 100 (nếu có câu hỏi)
-        // scorePct = điểm tổng / 100 * 100 => chính là totalEarned, nhưng giữ công thức để an toàn
         int scorePct = (int) Math.round((totalEarned * 100.0) / Math.max(totalMax, 1));
 
         attempt.setAnswersJson(writeAnswersJson(results));
         attempt.setScore(scorePct);
         attempt.setSubmitTime(LocalDateTime.now());
 
-        int pass = exam.getPassScore() != null ? exam.getPassScore() : DEFAULT_PASS_SCORE;
+        int pass = exam.getPassScore() != null ? exam.getPassScore() : passScore;
         attempt.setStatus(scorePct >= pass ? ExamResult.PASSED : ExamResult.FAILED);
 
         // AI feedback tổng (sau khi grade)
@@ -395,7 +415,8 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
 """.trim();
         }
 
-        attempt.setAiFeedback(aiFeedback);
+        String formatted = formatAiFeedback(me.getFullName(), aiFeedback);
+        attempt.setAiFeedback(formatted);
 
         attemptRepo.save(attempt);
 
@@ -413,7 +434,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         res.setTimedOut(timedOut);
 
         res.setFeedback(buildStaticFeedback(scorePct));
-        res.setAiFeedback(aiFeedback);
+        res.setAiFeedback(formatted);
         return res;
     }
 
@@ -488,7 +509,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
 
                 item.setScore(score);
                 item.setMaxScore(max);
-                item.setIsCorrect(max > 0 && score >= max); // giữ nguyên: perfect mới "đúng"
+                item.setIsCorrect(max > 0 && score >= max); // perfect mới "đúng"
                 item.setFeedback(ar != null ? ar.feedback : "");
             }
 
@@ -506,8 +527,337 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
     }
 
     // =========================
+    // V2 - no preview, no DB until submit
+    // =========================
+
+    @Override
+    public GeneratePracticeSessionResponse generateSessionV2(String email, GeneratePracticeSessionRequest req) {
+        validateGenerateV2Request(req);
+
+        User me = getMe(email);
+
+        LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
+
+        if (material.getStatus() != MaterialStatus.EXTRACTED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
+        }
+
+        // AI generate 1 lần
+        GenerateQuestionsResponse generated =
+                questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
+
+        validateGeneratedResponse(generated, req.getNumberOfQuestions());
+
+        String token = UUID.randomUUID().toString();
+        int duration = computeDurationMinutes(req.getNumberOfQuestions());
+
+        PracticeSessionData session = new PracticeSessionData();
+        session.sessionToken = token;
+        session.userId = me.getId();
+        session.userFullName = safeTrim(me.getFullName(), 120);
+        session.materialId = req.getMaterialId();
+        session.numberOfQuestions = req.getNumberOfQuestions();
+        session.durationMinutes = duration;
+
+        // gắn key ổn định cho từng câu (dùng để submit vì DB chưa có questionId)
+        List<SessionQuestion> qs = new ArrayList<>();
+        for (GeneratedQuestionItemResponse item : generated.getQuestions()) {
+            SessionQuestion sq = new SessionQuestion();
+            sq.key = UUID.randomUUID().toString();
+            sq.item = item;
+            qs.add(sq);
+        }
+        session.questions = qs;
+
+        practiceSessionCache.put(sessionKey(email, token), session);
+
+        GeneratePracticeSessionResponse res = new GeneratePracticeSessionResponse();
+        res.setSessionToken(token);
+        res.setMaterialId(req.getMaterialId());
+        res.setNumberOfQuestions(req.getNumberOfQuestions());
+        res.setDurationMinutes(duration);
+        return res;
+    }
+
+    @Override
+    public StartPracticeSessionResponse startSessionV2(String email, StartPracticeSessionRequest req) {
+        if (req == null || req.getSessionToken() == null || req.getSessionToken().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sessionToken is required");
+        }
+
+        PracticeSessionData session = getSessionOrThrow(email, req.getSessionToken());
+        if (session.startedAt == null) {
+            session.startedAt = LocalDateTime.now();
+            session.deadline = session.startedAt.plusMinutes(session.durationMinutes);
+            practiceSessionCache.put(sessionKey(email, session.sessionToken), session);
+        }
+        return buildSessionResponse(session);
+    }
+
+    @Override
+    public StartPracticeSessionResponse getSessionV2(String email, String sessionToken) {
+        PracticeSessionData session = getSessionOrThrow(email, sessionToken);
+        return buildSessionResponse(session);
+    }
+
+    @Override
+    @Transactional
+    public SubmitPracticeV2Response submitSessionV2(String email, String sessionToken, SubmitPracticeSessionRequest req) {
+        if (req == null || req.getAnswers() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Answers is required");
+        }
+
+        User me = getMe(email);
+        PracticeSessionData session = getSessionOrThrow(email, sessionToken);
+
+        if (!Objects.equals(session.userId, me.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Session does not belong to current user");
+        }
+
+        if (session.startedAt == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Session is not started yet");
+        }
+        if (session.submitted) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Session already submitted");
+        }
+
+        // map answers by key
+        Map<String, SubmitPracticeSessionRequest.AnswerItem> ansByKey = req.getAnswers().stream()
+                .filter(a -> a.getQuestionKey() != null && !a.getQuestionKey().isBlank())
+                .collect(Collectors.toMap(
+                        SubmitPracticeSessionRequest.AnswerItem::getQuestionKey,
+                        a -> a,
+                        (a, b) -> b
+                ));
+
+        // tách câu theo loại
+        List<SessionQuestion> mcq = session.questions.stream()
+                .filter(q -> q.item != null && q.item.getQuestionType() == QuestionType.MCQ)
+                .toList();
+        List<SessionQuestion> essay = session.questions.stream()
+                .filter(q -> q.item != null && q.item.getQuestionType() == QuestionType.ESSAY)
+                .toList();
+
+        int mcqCount = mcq.size();
+        int essayCount = essay.size();
+
+        int mcqBudget = (mcqCount > 0 && essayCount > 0) ? MCQ_TOTAL_POINTS : (mcqCount > 0 ? TOTAL_SCORE : 0);
+        int essayBudget = (mcqCount > 0 && essayCount > 0) ? ESSAY_TOTAL_POINTS : (essayCount > 0 ? TOTAL_SCORE : 0);
+
+        Map<String, Integer> mcqMax = allocatePointsByKey(mcq, mcqBudget);
+        Map<String, Integer> essayMax = allocatePointsByKey(essay, essayBudget);
+
+        // chấm điểm (theo key)
+        List<AnswerResultV2> resultsV2 = new ArrayList<>();
+        int totalEarned = 0;
+        int totalMax = 0;
+
+        for (SessionQuestion sq : session.questions) {
+            if (sq == null || sq.item == null) continue;
+            GeneratedQuestionItemResponse item = sq.item;
+
+            SubmitPracticeSessionRequest.AnswerItem a = ansByKey.get(sq.key);
+
+            if (item.getQuestionType() == QuestionType.MCQ) {
+                String sel = a != null ? normalizeChoice(a.getSelectedAnswer()) : "";
+                if (!isValidChoice(sel)) sel = "";
+                String right = normalizeChoice(item.getCorrectAnswer());
+                boolean isCorrect = !sel.isBlank() && sel.equals(right);
+
+                int maxScore = Math.max(0, mcqMax.getOrDefault(sq.key, 0));
+                int score = isCorrect ? maxScore : 0;
+
+                resultsV2.add(AnswerResultV2.forMcq(sq.key, sel, right, score, maxScore,
+                        isCorrect ? "Đúng" : "Sai"));
+                totalEarned += score;
+                totalMax += maxScore;
+            } else {
+                String textAnswer = a != null ? safeTrim(a.getTextAnswer(), 5000) : "";
+                Rubric rubric = new Rubric(
+                        safeTrim(item.getSampleAnswer(), 2000),
+                        item.getKeywords() == null ? List.of() : item.getKeywords(),
+                        10
+                );
+
+                int maxScore = Math.max(0, essayMax.getOrDefault(sq.key, 0));
+
+                // rule-based keyword coverage -> score 0..10 (KHÔNG MIN=1)
+                EssayScore fb = scoreEssay(textAnswer, rubric);
+                int score10 = Math.max(0, Math.min(fb.score, 10));
+
+                int score = (int) Math.round((score10 / 10.0) * maxScore);
+                score = Math.max(0, Math.min(score, maxScore));
+
+                resultsV2.add(AnswerResultV2.forEssay(sq.key, textAnswer, rubric.sampleAnswer, score, maxScore, fb.feedback));
+                totalEarned += score;
+                totalMax += maxScore;
+            }
+        }
+
+        int scorePct = (int) Math.round((totalEarned * 100.0) / Math.max(totalMax, 1));
+
+        // ============ LƯU DB (chỉ ở submit) ============
+        LearningMaterial material = materialRepo.findByIdAndUser(session.materialId, me)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
+
+        Exam exam = new Exam();
+        exam.setUser(me);
+        exam.setType(ExamType.PRACTICE);
+        exam.setDurationMinutes(session.durationMinutes);
+        exam.setPassScore(passScore);
+        exam.setCreatedAt(LocalDateTime.now());
+        exam = examRepo.save(exam);
+
+        // persist questions + map key->questionId
+        Map<String, Long> keyToQid = new HashMap<>();
+
+        for (SessionQuestion sq : session.questions) {
+            GeneratedQuestionItemResponse item = sq.item;
+            if (item == null || item.getQuestionType() == null) continue;
+
+            Question q = new Question();
+            q.setMaterial(material);
+            q.setQuestionType(item.getQuestionType());
+            q.setContent(item.getQuestion() == null ? "" : item.getQuestion().trim());
+
+            if (item.getQuestionType() == QuestionType.MCQ) {
+                q.setCorrectAnswer(normalizeChoice(item.getCorrectAnswer()));
+                q.setOptionsJson(writeOptionsJson(item.getOptions()));
+                q.setAnalysis(safeTrim(item.getAnalysis(), 2000));
+            } else {
+                q.setCorrectAnswer(null);
+                q.setOptionsJson(null);
+                q.setAnalysis(writeRubricJson(item.getSampleAnswer(), item.getKeywords(), item.getMaxScore()));
+            }
+
+            q = questionRepo.save(q);
+            keyToQid.put(sq.key, q.getId());
+
+            ExamQuestion eq = new ExamQuestion();
+            eq.setExam(exam);
+            eq.setQuestion(q);
+            examQuestionRepo.save(eq);
+        }
+
+        // chuyển resultsV2 -> AnswerResult (questionId)
+        List<AnswerResult> persisted = new ArrayList<>();
+        for (AnswerResultV2 r : resultsV2) {
+            Long qid = keyToQid.get(r.questionKey);
+            if (qid == null) continue;
+            if (r.questionType == QuestionType.MCQ) {
+                persisted.add(AnswerResult.forMcq(qid, r.selectedAnswer, r.correctAnswer, r.score, r.maxScore, r.feedback));
+            } else {
+                persisted.add(AnswerResult.forEssay(qid, r.textAnswer, r.sampleAnswer, r.score, r.maxScore, r.feedback));
+            }
+        }
+
+        ExamAttempt attempt = new ExamAttempt();
+        attempt.setUser(me);
+        attempt.setExam(exam);
+        attempt.setClassroom(me.getClassName());
+        attempt.setLearningModule(me.getLearningModule());
+        attempt.setStartTime(session.startedAt);
+        attempt.setSubmitTime(LocalDateTime.now());
+        attempt.setAnswersJson(writeAnswersJson(persisted));
+        attempt.setScore(scorePct);
+        attempt.setStatus(scorePct >= passScore ? ExamResult.PASSED : ExamResult.FAILED);
+
+        boolean timedOut = session.deadline != null && LocalDateTime.now().isAfter(session.deadline);
+
+        String rawAiFeedback = "";
+        try {
+            rawAiFeedback = responsesClient.generateText(buildAiFeedbackPromptFromGenerated(session, resultsV2, scorePct));
+        } catch (Exception ignore) {
+        }
+
+        String formatted = formatAiFeedback(session.userFullName, rawAiFeedback);
+        attempt.setAiFeedback(formatted);
+
+        attemptRepo.save(attempt);
+
+        // invalidate session (tránh reuse + tránh rác)
+        session.submitted = true;
+        practiceSessionCache.invalidate(sessionKey(email, session.sessionToken));
+
+        SubmitPracticeV2Response res = new SubmitPracticeV2Response();
+        res.setAttemptId(attempt.getId());
+        res.setScore(scorePct);
+        res.setEarnedPoints(totalEarned);
+        res.setTotalPoints(totalMax);
+        res.setStatus(attempt.getStatus());
+        res.setTimedOut(timedOut);
+        res.setFeedback(buildStaticFeedback(scorePct));
+        res.setAiFeedback(formatted);
+        return res;
+    }
+
+    // =========================
     // Internal helper models
     // =========================
+
+    private static class PracticeSessionData {
+        public String sessionToken;
+        public Long userId;
+        public String userFullName;
+
+        public Long materialId;
+        public Integer numberOfQuestions;
+        public Integer durationMinutes;
+
+        public LocalDateTime startedAt;
+        public LocalDateTime deadline;
+        public boolean submitted;
+
+        public List<SessionQuestion> questions = new ArrayList<>();
+    }
+
+    private static class SessionQuestion {
+        public String key;
+        public GeneratedQuestionItemResponse item;
+    }
+
+    private static class AnswerResultV2 {
+        public String questionKey;
+        public QuestionType questionType;
+
+        // MCQ
+        public String selectedAnswer;
+        public String correctAnswer;
+
+        // ESSAY
+        public String textAnswer;
+        public String sampleAnswer;
+
+        public Integer score;
+        public Integer maxScore;
+        public String feedback;
+
+        public static AnswerResultV2 forMcq(String key, String selected, String correct, int score, int max, String feedback) {
+            AnswerResultV2 r = new AnswerResultV2();
+            r.questionKey = key;
+            r.questionType = QuestionType.MCQ;
+            r.selectedAnswer = selected;
+            r.correctAnswer = correct;
+            r.score = score;
+            r.maxScore = max;
+            r.feedback = feedback;
+            return r;
+        }
+
+        public static AnswerResultV2 forEssay(String key, String textAnswer, String sampleAnswer, int score, int max, String feedback) {
+            AnswerResultV2 r = new AnswerResultV2();
+            r.questionKey = key;
+            r.questionType = QuestionType.ESSAY;
+            r.textAnswer = textAnswer;
+            r.sampleAnswer = sampleAnswer;
+            r.score = score;
+            r.maxScore = max;
+            r.feedback = feedback;
+            return r;
+        }
+    }
+
     private static class AnswerResult {
         public Long questionId;
         public QuestionType questionType;
@@ -572,7 +922,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
     }
 
     private static class AiEssayGrade {
-        public Integer score;            // 1..10
+        public Integer score;            // 0..10
         public String explanation;       // giải thích
         public List<String> needReview;  // gợi ý ôn
         public AiEssayGrade() {}
@@ -582,14 +932,22 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
     // ESSAY: AI grading helpers
     // =========================
     private AiEssayGrade gradeEssayByAi(Question q, String userAnswer, Rubric rubric) {
+        String ua = userAnswer == null ? "" : userAnswer.trim();
+        if (ua.isBlank()) {
+            AiEssayGrade g = new AiEssayGrade();
+            g.score = 0;
+            g.explanation = "Chưa trả lời.";
+            g.needReview = List.of();
+            return g;
+        }
         String prompt = """
 Bạn là giám khảo chấm câu hỏi tự luận ngắn.
 Chỉ dựa vào câu hỏi + đáp án mẫu + bài làm học viên. Không bịa thêm kiến thức ngoài phạm vi.
-Chấm điểm thang 1-10 (1 là rất kém, 10 là rất tốt).
+Chấm điểm thang 0-10 (0 là không trả lời / sai hoàn toàn, 10 là rất tốt).
 
 Trả về DUY NHẤT một JSON hợp lệ theo format:
 {
-  "score": 1,
+  "score": 0,
   "explanation": "giải thích ngắn gọn vì sao điểm như vậy, chỉ ra thiếu/sai ở đâu",
   "needReview": ["chủ đề 1", "chủ đề 2"]
 }
@@ -605,7 +963,7 @@ Bài làm học viên: %s
                 safeTrim(q.getContent(), 1500),
                 safeTrim(rubric.sampleAnswer, 2000),
                 String.join(", ", rubric.keywords == null ? List.of() : rubric.keywords),
-                safeTrim(userAnswer, 5000)
+                safeTrim(ua, 5000)
         );
 
         String raw = responsesClient.generateText(prompt);
@@ -614,8 +972,8 @@ Bài làm học viên: %s
         try {
             AiEssayGrade g = om.readValue(raw, AiEssayGrade.class);
 
-            int score = g.score == null ? 1 : g.score;
-            if (score < 1) score = 1;
+            int score = g.score == null ? 0 : g.score;
+            if (score < 0) score = 0;
             if (score > 10) score = 10;
 
             g.score = score;
@@ -719,6 +1077,9 @@ Bài làm học viên: %s
         }
 
         double ratio = hit * 1.0 / Math.max(kws.size(), 1);
+        if (ratio < 0.2) {
+            return new EssayScore(0, "Chưa đúng ý trọng tâm.");
+        }
         int score10 = (int) Math.round(ratio * 10);
 
         String fb;
@@ -787,6 +1148,108 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         return sb.toString();
     }
 
+    private String buildAiFeedbackPromptFromGenerated(PracticeSessionData session, List<AnswerResultV2> results, int scorePct) {
+        Map<String, AnswerResultV2> map = results.stream()
+                .collect(Collectors.toMap(a -> a.questionKey, a -> a, (a, b) -> b));
+
+        String name = session.userFullName == null || session.userFullName.isBlank() ? "bạn" : session.userFullName;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Hãy nhận xét NGẮN GỌN cho học viên (tiếng Việt).\n");
+        sb.append("Yêu cầu định dạng: chỉ dùng gạch đầu dòng bắt đầu bằng '- '. Không in đậm, không đánh số, không markdown.\n");
+        sb.append("Chào ").append(name).append(".\n");
+        sb.append("Điểm tổng: ").append(scorePct).append("/100\n\n");
+        sb.append("Nội dung cần có:\n");
+        sb.append("- Tổng quan (2-3 ý)\n");
+        sb.append("- Lỗi sai nổi bật (tối đa 4 ý)\n");
+        sb.append("- Gợi ý ôn tập (3-5 ý)\n\n");
+
+        int idx = 1;
+        for (SessionQuestion sq : session.questions) {
+            if (sq == null || sq.item == null) continue;
+            AnswerResultV2 ar = map.get(sq.key);
+            sb.append("Câu ").append(idx++).append(": ")
+                    .append(safeTrim(sq.item.getQuestion(), 800))
+                    .append("\n");
+
+            if (sq.item.getQuestionType() == QuestionType.MCQ) {
+                sb.append("Đúng: ").append(normalizeChoice(sq.item.getCorrectAnswer()))
+                        .append(". Chọn: ").append(ar != null ? safeStr(ar.selectedAnswer) : "")
+                        .append(".\n");
+            } else {
+                sb.append("Đáp án mẫu: ").append(safeTrim(sq.item.getSampleAnswer(), 800)).append("\n");
+                sb.append("Trả lời: ").append(ar != null ? safeTrim(ar.textAnswer, 800) : "").append("\n");
+                if (sq.item.getKeywords() != null && !sq.item.getKeywords().isEmpty()) {
+                    sb.append("Keywords: ").append(String.join(", ", sq.item.getKeywords())).append("\n");
+                }
+            }
+
+            sb.append("Chấm: ").append(ar != null ? ar.score : 0)
+                    .append("/").append(ar != null ? ar.maxScore : 0)
+                    .append("\n\n");
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * Format feedback:
+     * - greeting: "Chào <tên user>"
+     * - bullet list '- '
+     * - remove markdown bold/numbered headings
+     */
+    private String formatAiFeedback(String userFullName, String raw) {
+        String name = (userFullName == null || userFullName.isBlank()) ? "bạn" : userFullName.trim();
+        String text = raw == null ? "" : raw;
+
+        // strip common markdown
+        text = text.replace("**", "")
+                .replace("__", "")
+                .replace("##", "")
+                .replace("###", "")
+                .trim();
+
+        // collect candidate lines
+        List<String> lines = new ArrayList<>();
+        for (String line : text.split("\\r?\\n")) {
+            String l = line.trim();
+            if (l.isBlank()) continue;
+
+            // ✅ FIX: escape đúng trong Java string regex
+            // remove leading numbering like "1." "2)" etc
+            l = l.replaceFirst("^[0-9]+[\\.)]\\s*", "");
+
+            // ✅ FIX: escape '-' trong character class
+            // normalize bullets
+            l = l.replaceFirst("^[•\\-–—]+\\s*", "");
+
+            if (l.isBlank()) continue;
+            lines.add(l);
+        }
+
+        // fallback if AI empty
+        if (lines.isEmpty()) {
+            lines = List.of(
+                    "Bạn làm xong bài, hãy xem lại các câu sai để rút kinh nghiệm.",
+                    "Ưu tiên ôn lại phần kiến thức nền và ví dụ trong học liệu.",
+                    "Làm lại bài với thời gian giới hạn để tăng tốc độ."
+            );
+        }
+
+        // keep only top bullets
+        int limit = Math.max(3, feedbackMaxBullets);
+        if (lines.size() > limit) {
+            lines = lines.subList(0, limit);
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Chào ").append(name).append(",\n");
+        for (String l : lines) {
+            sb.append("- ").append(l).append("\n");
+        }
+        return sb.toString().trim();
+    }
+
     // =========================
     // Helpers
     // =========================
@@ -796,9 +1259,27 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         if (req.getNumberOfQuestions() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
 
         int n = req.getNumberOfQuestions();
-        if (n <= 0 || n > MAX_QUESTIONS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + MAX_QUESTIONS);
+        if (n <= 0 || n > maxQuestions) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + maxQuestions);
         }
+    }
+
+    private void validateGenerateV2Request(GeneratePracticeSessionRequest req) {
+        if (req == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
+        if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
+        if (req.getNumberOfQuestions() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
+        int n = req.getNumberOfQuestions();
+        if (n <= 0 || n > maxQuestions) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + maxQuestions);
+        }
+    }
+
+    private int computeDurationMinutes(int numberOfQuestions) {
+        int n = Math.max(1, numberOfQuestions);
+        int raw = durationBaseMinutes + (n * durationPerQuestionMinutes);
+        raw = Math.max(durationMinMinutes, raw);
+        raw = Math.min(durationMaxMinutes, raw);
+        return raw;
     }
 
     private void validateGeneratedResponse(GenerateQuestionsResponse res, int expected) {
@@ -816,8 +1297,45 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         return "practice_preview:" + email + ":" + token;
     }
 
+    private String sessionKey(String email, String token) {
+        return "practice_v2:" + email + ":" + token;
+    }
+
+    private PracticeSessionData getSessionOrThrow(String email, String sessionToken) {
+        String token = normalizeToken(sessionToken);
+        if (token.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "sessionToken is required");
+        }
+        Object cached = practiceSessionCache.getIfPresent(sessionKey(email, token));
+        if (cached instanceof PracticeSessionData s) {
+            return s;
+        }
+        throw new ResponseStatusException(HttpStatus.GONE, "Session expired. Please generate again.");
+    }
+
+    private StartPracticeSessionResponse buildSessionResponse(PracticeSessionData session) {
+        StartPracticeSessionResponse res = new StartPracticeSessionResponse();
+        res.setSessionToken(session.sessionToken);
+        res.setDurationMinutes(session.durationMinutes);
+        res.setStartedAt(session.startedAt);
+        res.setDeadline(session.deadline);
+
+        List<PracticeQuestionV2Response> questions = new ArrayList<>();
+        for (SessionQuestion sq : session.questions) {
+            if (sq == null || sq.item == null) continue;
+            PracticeQuestionV2Response q = new PracticeQuestionV2Response();
+            q.setQuestionKey(sq.key);
+            q.setQuestionType(sq.item.getQuestionType());
+            q.setContent(safeTrim(sq.item.getQuestion(), 4000));
+            q.setOptions(sq.item.getQuestionType() == QuestionType.MCQ ? sq.item.getOptions() : null);
+            questions.add(q);
+        }
+        res.setQuestions(questions);
+        return res;
+    }
+
     private GenerateQuestionsResponse getCachedPreview(String email, String token) {
-        Object cached = practicePreviewCache.getIfPresent(previewKey(email, token));
+        Object cached = practiceSessionCache.getIfPresent(previewKey(email, token));
         if (cached instanceof GenerateQuestionsResponse r) return r;
         return null;
     }
@@ -884,6 +1402,27 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         for (int i = 0; i < count; i++) {
             int pts = base + (i < rem ? 1 : 0);
             map.put(questions.get(i).getId(), pts);
+        }
+        return map;
+    }
+
+    /**
+     * V2: chia điểm theo key (DB chưa có questionId ở thời điểm làm bài).
+     */
+    private Map<String, Integer> allocatePointsByKey(List<SessionQuestion> questions, int totalPoints) {
+        Map<String, Integer> map = new HashMap<>();
+        if (questions == null || questions.isEmpty() || totalPoints <= 0) return map;
+
+        int count = questions.size();
+        int base = totalPoints / count;
+        int rem = totalPoints % count;
+
+        for (int i = 0; i < count; i++) {
+            int pts = base + (i < rem ? 1 : 0);
+            SessionQuestion q = questions.get(i);
+            if (q != null && q.key != null) {
+                map.put(q.key, pts);
+            }
         }
         return map;
     }

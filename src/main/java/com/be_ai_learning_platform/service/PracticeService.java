@@ -1,7 +1,6 @@
 package com.be_ai_learning_platform.service;
 
-import com.be_ai_learning_platform.dto.request.PracticeGenerateRequest;
-import com.be_ai_learning_platform.dto.request.SubmitPracticeRequest;
+import com.be_ai_learning_platform.dto.request.*;
 import com.be_ai_learning_platform.dto.response.*;
 
 public interface PracticeService {
@@ -12,5 +11,13 @@ public interface PracticeService {
 
     // ✅ NEW
     AttemptReviewResponse getReview(String email, Long attemptId);
+
+    // =========================
+    // V2 (no preview, no DB until submit)
+    // =========================
+    GeneratePracticeSessionResponse generateSessionV2(String email, GeneratePracticeSessionRequest req);
+    StartPracticeSessionResponse startSessionV2(String email, StartPracticeSessionRequest req);
+    StartPracticeSessionResponse getSessionV2(String email, String sessionToken);
+    SubmitPracticeV2Response submitSessionV2(String email, String sessionToken, SubmitPracticeSessionRequest req);
 
 }
