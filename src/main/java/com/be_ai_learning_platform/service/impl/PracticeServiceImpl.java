@@ -11,11 +11,11 @@ import com.be_ai_learning_platform.entity.enums.QuestionType;
 import com.be_ai_learning_platform.repository.*;
 import com.be_ai_learning_platform.service.PracticeService;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
+import com.be_ai_learning_platform.service.SystemSettingsService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import org.springframework.http.HttpStatus;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
@@ -34,6 +34,16 @@ public class PracticeServiceImpl implements PracticeService {
     private static final int MCQ_TOTAL_POINTS = 70;
     private static final int ESSAY_TOTAL_POINTS = 30;
 
+    // giữ nguyên behavior validate (trước đây lấy từ properties)
+    private static final int DEFAULT_MAX_QUESTIONS = 20;
+
+    // clamp duration (vì settings chỉ có minutesPerQuestion)
+    private static final int DURATION_MIN_MINUTES = 5;
+    private static final int DURATION_MAX_MINUTES = 120;
+
+    // giữ nguyên logic format feedback (trước đây lấy từ properties)
+    private static final int DEFAULT_FEEDBACK_MAX_BULLETS = 8;
+
     private final UserRepository userRepo;
     private final LearningMaterialRepository materialRepo;
 
@@ -48,16 +58,7 @@ public class PracticeServiceImpl implements PracticeService {
     private final ObjectMapper om;
     private final Cache<String, Object> practiceSessionCache;
 
-    // ===== configurable (application.properties) =====
-    private final int passScore;
-    private final int maxQuestions;
-
-    private final int durationBaseMinutes;
-    private final int durationPerQuestionMinutes;
-    private final int durationMinMinutes;
-    private final int durationMaxMinutes;
-
-    private final int feedbackMaxBullets;
+    private final SystemSettingsService settingsService;
 
     public PracticeServiceImpl(
             UserRepository userRepo,
@@ -70,13 +71,7 @@ public class PracticeServiceImpl implements PracticeService {
             GeminiResponsesClient responsesClient,
             ObjectMapper om,
             Cache<String, Object> practiceSessionCache,
-            @Value("${ai.practice.pass-score:80}") int passScore,
-            @Value("${ai.practice.max-questions:20}") int maxQuestions,
-            @Value("${ai.practice.duration.base-minutes:3}") int durationBaseMinutes,
-            @Value("${ai.practice.duration.per-question-minutes:2}") int durationPerQuestionMinutes,
-            @Value("${ai.practice.duration.min-minutes:10}") int durationMinMinutes,
-            @Value("${ai.practice.duration.max-minutes:45}") int durationMaxMinutes,
-            @Value("${ai.practice.feedback.max-bullets:8}") int feedbackMaxBullets
+            SystemSettingsService settingsService
     ) {
         this.userRepo = userRepo;
         this.materialRepo = materialRepo;
@@ -88,14 +83,7 @@ public class PracticeServiceImpl implements PracticeService {
         this.responsesClient = responsesClient;
         this.om = om;
         this.practiceSessionCache = practiceSessionCache;
-
-        this.passScore = passScore;
-        this.maxQuestions = maxQuestions;
-        this.durationBaseMinutes = durationBaseMinutes;
-        this.durationPerQuestionMinutes = durationPerQuestionMinutes;
-        this.durationMinMinutes = durationMinMinutes;
-        this.durationMaxMinutes = durationMaxMinutes;
-        this.feedbackMaxBullets = feedbackMaxBullets;
+        this.settingsService = settingsService;
     }
 
     // =========================
@@ -176,7 +164,7 @@ public class PracticeServiceImpl implements PracticeService {
         exam.setUser(me);
         exam.setType(ExamType.PRACTICE);
         exam.setDurationMinutes(req.getDurationMinutes() != null ? req.getDurationMinutes() : computeDurationMinutes(req.getNumberOfQuestions()));
-        exam.setPassScore(passScore);
+        exam.setPassScore(settingsService.getPassScore());
         exam.setCreatedAt(LocalDateTime.now());
         exam = examRepo.save(exam);
 
@@ -396,7 +384,7 @@ public class PracticeServiceImpl implements PracticeService {
         attempt.setScore(scorePct);
         attempt.setSubmitTime(LocalDateTime.now());
 
-        int pass = exam.getPassScore() != null ? exam.getPassScore() : passScore;
+        int pass = exam.getPassScore() != null ? exam.getPassScore() : settingsService.getPassScore();
         attempt.setStatus(scorePct >= pass ? ExamResult.PASSED : ExamResult.FAILED);
 
         // AI feedback tổng (sau khi grade)
@@ -705,7 +693,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         exam.setUser(me);
         exam.setType(ExamType.PRACTICE);
         exam.setDurationMinutes(session.durationMinutes);
-        exam.setPassScore(passScore);
+        exam.setPassScore(settingsService.getPassScore());
         exam.setCreatedAt(LocalDateTime.now());
         exam = examRepo.save(exam);
 
@@ -761,7 +749,9 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         attempt.setSubmitTime(LocalDateTime.now());
         attempt.setAnswersJson(writeAnswersJson(persisted));
         attempt.setScore(scorePct);
-        attempt.setStatus(scorePct >= passScore ? ExamResult.PASSED : ExamResult.FAILED);
+
+        int pass = settingsService.getPassScore();
+        attempt.setStatus(scorePct >= pass ? ExamResult.PASSED : ExamResult.FAILED);
 
         boolean timedOut = session.deadline != null && LocalDateTime.now().isAfter(session.deadline);
 
@@ -940,6 +930,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
             g.needReview = List.of();
             return g;
         }
+
         String prompt = """
 Bạn là giám khảo chấm câu hỏi tự luận ngắn.
 Chỉ dựa vào câu hỏi + đáp án mẫu + bài làm học viên. Không bịa thêm kiến thức ngoài phạm vi.
@@ -1215,11 +1206,9 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
             String l = line.trim();
             if (l.isBlank()) continue;
 
-            // ✅ FIX: escape đúng trong Java string regex
             // remove leading numbering like "1." "2)" etc
             l = l.replaceFirst("^[0-9]+[\\.)]\\s*", "");
 
-            // ✅ FIX: escape '-' trong character class
             // normalize bullets
             l = l.replaceFirst("^[•\\-–—]+\\s*", "");
 
@@ -1236,8 +1225,7 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
             );
         }
 
-        // keep only top bullets
-        int limit = Math.max(3, feedbackMaxBullets);
+        int limit = Math.max(3, DEFAULT_FEEDBACK_MAX_BULLETS);
         if (lines.size() > limit) {
             lines = lines.subList(0, limit);
         }
@@ -1259,8 +1247,8 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         if (req.getNumberOfQuestions() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
 
         int n = req.getNumberOfQuestions();
-        if (n <= 0 || n > maxQuestions) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + maxQuestions);
+        if (n <= 0 || n > DEFAULT_MAX_QUESTIONS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + DEFAULT_MAX_QUESTIONS);
         }
     }
 
@@ -1269,16 +1257,22 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
         if (req.getNumberOfQuestions() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
         int n = req.getNumberOfQuestions();
-        if (n <= 0 || n > maxQuestions) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + maxQuestions);
+        if (n <= 0 || n > DEFAULT_MAX_QUESTIONS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + DEFAULT_MAX_QUESTIONS);
         }
     }
 
     private int computeDurationMinutes(int numberOfQuestions) {
         int n = Math.max(1, numberOfQuestions);
-        int raw = durationBaseMinutes + (n * durationPerQuestionMinutes);
-        raw = Math.max(durationMinMinutes, raw);
-        raw = Math.min(durationMaxMinutes, raw);
+
+        double perQ = settingsService.getMinutesPerQuestion();
+        if (perQ <= 0) perQ = 2.0;
+
+        int raw = (int) Math.round(n * perQ);
+
+        raw = Math.max(DURATION_MIN_MINUTES, raw);
+        raw = Math.min(DURATION_MAX_MINUTES, raw);
+
         return raw;
     }
 
