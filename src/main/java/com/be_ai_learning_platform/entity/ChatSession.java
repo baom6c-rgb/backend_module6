@@ -1,10 +1,15 @@
 package com.be_ai_learning_platform.entity;
 
 import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.Setter;
+
 import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "chat_session")
+@Getter
+@Setter
 public class ChatSession {
 
     @Id
@@ -21,4 +26,3 @@ public class ChatSession {
 
     private LocalDateTime createdAt = LocalDateTime.now();
 }
-
