@@ -112,4 +112,28 @@ public class PracticeController {
     ) {
         return practiceService.submitSessionV2(authentication.getName(), sessionToken, req);
     }
+
+
+    /**
+     * V2/Retest status: FE dùng để hiển thị countdown nút "Làm lại"
+     */
+    @GetMapping("/v2/attempts/{attemptId}/retest-status")
+    public RetestStatusResponse getRetestStatusV2(
+            Authentication authentication,
+            @PathVariable Long attemptId
+    ) {
+        return practiceService.getRetestStatusV2(authentication.getName(), attemptId);
+    }
+
+    /**
+     * V2/Retest start: tạo session mới tập trung phần sai và START ngay.
+     */
+    @PostMapping("/v2/attempts/{attemptId}/retest/start")
+    public StartPracticeSessionResponse startRetestV2(
+            Authentication authentication,
+            @PathVariable Long attemptId
+    ) {
+        return practiceService.startRetestV2(authentication.getName(), attemptId);
+    }
+
 }

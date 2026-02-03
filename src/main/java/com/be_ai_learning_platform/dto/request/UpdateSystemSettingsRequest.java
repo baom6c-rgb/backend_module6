@@ -20,6 +20,11 @@ public class UpdateSystemSettingsRequest {
     private Double minutesPerQuestion;
 
     @NotNull
+    @Min(0)
+    @Max(1440)
+    private Integer retestCooldownMinutes; // minutes
+
+    @NotNull
     private Boolean emailNotificationsEnabled;
 
     @NotNull

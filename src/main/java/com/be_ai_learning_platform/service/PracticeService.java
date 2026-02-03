@@ -20,4 +20,10 @@ public interface PracticeService {
     StartPracticeSessionResponse getSessionV2(String email, String sessionToken);
     SubmitPracticeV2Response submitSessionV2(String email, String sessionToken, SubmitPracticeSessionRequest req);
 
+    // =========================
+    // V2 Retest
+    // =========================
+    RetestStatusResponse getRetestStatusV2(String email, Long attemptId);
+    StartPracticeSessionResponse startRetestV2(String email, Long attemptId);
+
 }

@@ -31,6 +31,9 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Value("${app.settings.default.minutesPerQuestion:2.0}")
     private double defaultMinutesPerQuestion;
 
+    @Value("${app.settings.default.retestCooldownMinutes:30}")
+    private int defaultRetestCooldownMinutes;
+
     @Value("${app.settings.default.emailNotificationsEnabled:true}")
     private boolean defaultEmailEnabled;
 
@@ -45,6 +48,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         s.setId(SETTINGS_ID);
         s.setPassScore(defaultPassScore);
         s.setMinutesPerQuestion(defaultMinutesPerQuestion);
+        s.setRetestCooldownMinutes(defaultRetestCooldownMinutes);
         s.setEmailNotificationsEnabled(defaultEmailEnabled);
         s.setAdminEmails(normalizeEmails(defaultAdminEmails));
         s.setUpdatedAt(LocalDateTime.now());
@@ -71,6 +75,13 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Transactional(readOnly = true)
     public double getMinutesPerQuestion() {
         return getSettings().getMinutesPerQuestion();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public int getRetestCooldownMinutes() {
+        Integer v = getSettings().getRetestCooldownMinutes();
+        return v == null ? 0 : Math.max(0, v);
     }
 
     @Override
@@ -112,11 +123,15 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         if (req.getPassScore() == null || req.getPassScore() < 0 || req.getPassScore() > 100) {
             throw new IllegalArgumentException("passScore must be 0..100");
         }
+        if (req.getRetestCooldownMinutes() == null || req.getRetestCooldownMinutes() < 0 || req.getRetestCooldownMinutes() > 1440) {
+            throw new IllegalArgumentException("retestCooldownMinutes must be 0..1440");
+        }
 
         SystemSettings s = getSettings();
 
         s.setPassScore(req.getPassScore());
         s.setMinutesPerQuestion(req.getMinutesPerQuestion());
+        s.setRetestCooldownMinutes(req.getRetestCooldownMinutes());
         s.setEmailNotificationsEnabled(Boolean.TRUE.equals(req.getEmailNotificationsEnabled()));
         s.setAdminEmails(normalizeEmails(req.getAdminEmails()));
         s.setUpdatedAt(LocalDateTime.now());
@@ -131,6 +146,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         SystemSettingsResponse r = new SystemSettingsResponse();
         r.setPassScore(s.getPassScore());
         r.setMinutesPerQuestion(s.getMinutesPerQuestion());
+        r.setRetestCooldownMinutes(s.getRetestCooldownMinutes());
         r.setEmailNotificationsEnabled(Boolean.TRUE.equals(s.getEmailNotificationsEnabled()));
         r.setAdminEmails(s.getAdminEmails());
         r.setUpdatedAt(s.getUpdatedAt());

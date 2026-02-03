@@ -11,6 +11,7 @@ public class SystemSettingsResponse {
 
     private Integer passScore;
     private Double minutesPerQuestion;
+    private Integer retestCooldownMinutes;
 
     private Boolean emailNotificationsEnabled;
     private String adminEmails;
