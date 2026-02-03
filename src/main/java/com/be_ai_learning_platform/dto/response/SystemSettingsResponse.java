@@ -16,5 +16,16 @@ public class SystemSettingsResponse {
     private Boolean emailNotificationsEnabled;
     private String adminEmails;
 
+    // ===== Monthly Admin Report =====
+    private Boolean monthlyReportEnabled;
+    /** 1..31, 0 = last day */
+    private Integer monthlyReportDayOfMonth;
+    /** HH:mm */
+    private String monthlyReportTime;
+    /** IANA zone id, e.g. Asia/Bangkok */
+    private String monthlyReportTimeZone;
+    /** YYYY-MM đã gửi gần nhất */
+    private String monthlyReportLastSentYearMonth;
+
     private LocalDateTime updatedAt;
 }

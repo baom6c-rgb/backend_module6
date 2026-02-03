@@ -29,4 +29,25 @@ public class UpdateSystemSettingsRequest {
 
     @NotNull
     private String adminEmails; // CSV: a@x.com,b@y.com
+
+    // ===== Monthly Admin Report =====
+    private Boolean monthlyReportEnabled;
+
+    /**
+     * Ngày gửi trong tháng (1..31). Nếu = 0 -> ngày cuối cùng của tháng.
+     */
+    @Min(0)
+    @Max(31)
+    private Integer monthlyReportDayOfMonth;
+
+    /**
+     * Giờ gửi (HH:mm) theo timezone monthlyReportTimeZone.
+     * Ví dụ: 23:59
+     */
+    private String monthlyReportTime;
+
+    /**
+     * Timezone IANA. Ví dụ: Asia/Bangkok
+     */
+    private String monthlyReportTimeZone;
 }
