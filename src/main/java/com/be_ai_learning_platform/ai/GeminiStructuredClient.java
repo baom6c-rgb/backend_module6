@@ -21,8 +21,60 @@ public class GeminiStructuredClient {
     }
 
     /**
-     * REST v1 generateContent không support responseSchema/responseMimeType.
-     * -> Ép JSON bằng prompt contract + sanitize output.
+     * ✅ NEW: Generic JSON generation (không phụ thuộc numberOfQuestions)
+     */
+    public String generateJson(String prompt, String jsonContract) {
+        if (prompt == null || prompt.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Prompt is empty");
+        }
+        if (jsonContract == null || jsonContract.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "JSON contract is empty");
+        }
+        if (props == null || props.model() == null || props.model().isBlank()) {
+            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Gemini model is not configured");
+        }
+
+        String finalPrompt = prompt + "\n\n" + jsonContract;
+
+        Map<String, Object> body = Map.of(
+                "contents", List.of(
+                        Map.of("role", "user", "parts", List.of(Map.of("text", finalPrompt)))
+                ),
+                "generationConfig", Map.of(
+                        "temperature", 0,
+                        "topP", 0.1,
+                        "maxOutputTokens", 4096
+                )
+        );
+
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> res = restClient.post()
+                    .uri("/v1/models/{model}:generateContent", props.model())
+                    .body(body)
+                    .retrieve()
+                    .body(Map.class);
+
+            String text = GeminiTextExtractor.extractText(res);
+            return sanitizeJsonText(text);
+
+        } catch (RestClientResponseException e) {
+            String bodyStr = e.getResponseBodyAsString();
+            String brief = bodyStr == null ? "" : bodyStr.trim();
+            if (brief.length() > 600) brief = brief.substring(0, 600) + "...";
+
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Gemini API error " + e.getRawStatusCode() + (brief.isBlank() ? "" : (": " + brief)),
+                    e
+            );
+        } catch (Exception e) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Gemini request failed", e);
+        }
+    }
+
+    /**
+     * (Giữ nguyên method cũ)
      */
     public String generateJsonBySchema(String prompt, int numberOfQuestions) {
         if (prompt == null || prompt.isBlank()) {
@@ -44,7 +96,6 @@ public class GeminiStructuredClient {
                 "generationConfig", Map.of(
                         "temperature", 0,
                         "topP", 0.1,
-                        // ✅ giảm output để hạn chế bị cắt JSON
                         "maxOutputTokens", 8192
                 )
         );
@@ -117,35 +168,27 @@ RULES:
 """.formatted(n);
     }
 
-    /**
-     * Remove code fences + lấy đoạn JSON object từ { ... } + fix vài lỗi hay gặp.
-     */
     private String sanitizeJsonText(String text) {
         if (text == null) return "";
         String t = text.trim();
 
-        // strip ``` fences
         if (t.startsWith("```")) {
             t = t.replaceFirst("^```[a-zA-Z]*\\s*", "");
             t = t.replaceFirst("\\s*```\\s*$", "");
             t = t.trim();
         }
 
-        // extract JSON object
         int start = t.indexOf('{');
         int end = t.lastIndexOf('}');
         if (start >= 0 && end > start) {
             t = t.substring(start, end + 1).trim();
         }
 
-        // remove BOM
         if (!t.isEmpty() && t.charAt(0) == '\uFEFF') {
             t = t.substring(1).trim();
         }
 
-        // remove trailing commas before } or ]
         t = t.replaceAll(",\\s*([}\\]])", "$1");
-
         return t;
     }
 }
