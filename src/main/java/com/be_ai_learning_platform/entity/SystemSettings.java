@@ -22,6 +22,10 @@ public class SystemSettings {
     @Column(nullable = false)
     private Double minutesPerQuestion; // ví dụ: 2.3
 
+    // ===== RETEST =====
+    @Column(nullable = false)
+    private Integer retestCooldownMinutes; // ví dụ: 30
+
     // ===== EMAIL =====
     @Column(nullable = false)
     private Boolean emailNotificationsEnabled;

@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -779,10 +780,205 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         res.setTimedOut(timedOut);
         res.setFeedback(buildStaticFeedback(scorePct));
         res.setAiFeedback(formatted);
+
+        // ===== Retest (cooldown) =====
+        boolean failed = attempt.getStatus() == ExamResult.FAILED;
+        res.setShowRetest(failed);
+
+        if (failed) {
+            int cooldownMin = Math.max(0, settingsService.getRetestCooldownMinutes());
+            LocalDateTime availableAt = (attempt.getSubmitTime() != null)
+                    ? attempt.getSubmitTime().plusMinutes(cooldownMin)
+                    : LocalDateTime.now().plusMinutes(cooldownMin);
+
+            long remainingSec = Math.max(0, Duration.between(LocalDateTime.now(), availableAt).getSeconds());
+
+            res.setRetestCooldownMinutes(cooldownMin);
+            res.setRetestAvailableAt(availableAt);
+            res.setRetestRemainingSeconds(remainingSec);
+            res.setCanRetestNow(remainingSec == 0);
+        } else {
+            res.setRetestCooldownMinutes(0);
+            res.setRetestAvailableAt(null);
+            res.setRetestRemainingSeconds(0L);
+            res.setCanRetestNow(true);
+        }
+
         return res;
     }
 
-    // =========================
+
+// =========================
+// V2 - Retest
+// =========================
+
+    @Override
+    @Transactional(readOnly = true)
+    public RetestStatusResponse getRetestStatusV2(String email, Long attemptId) {
+        User me = getMe(email);
+
+        ExamAttempt attempt = attemptRepo.findByIdAndUserIdFetchExam(attemptId, me.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attempt not found"));
+
+        if (attempt.getSubmitTime() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Attempt is not submitted yet");
+        }
+
+        boolean failed = attempt.getStatus() == ExamResult.FAILED;
+
+        int cooldownMin = Math.max(0, settingsService.getRetestCooldownMinutes());
+        LocalDateTime availableAt = attempt.getSubmitTime().plusMinutes(cooldownMin);
+
+        long remainingSec = 0;
+        if (failed) {
+            remainingSec = Math.max(0, Duration.between(LocalDateTime.now(), availableAt).getSeconds());
+        }
+
+        RetestStatusResponse res = new RetestStatusResponse();
+        res.setAttemptId(attempt.getId());
+        res.setShowRetest(failed);
+        res.setCooldownMinutes(cooldownMin);
+        res.setAvailableAt(availableAt);
+        res.setRemainingSeconds(remainingSec);
+        res.setCanRetestNow(failed && remainingSec == 0);
+        return res;
+    }
+
+    @Override
+    @Transactional
+    public StartPracticeSessionResponse startRetestV2(String email, Long attemptId) {
+        User me = getMe(email);
+
+        ExamAttempt attempt = attemptRepo.findByIdAndUserIdFetchExam(attemptId, me.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attempt not found"));
+
+        if (attempt.getSubmitTime() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Attempt is not submitted yet");
+        }
+
+        if (attempt.getStatus() != ExamResult.FAILED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Retest is only available when FAILED");
+        }
+
+        RetestStatusResponse status = getRetestStatusV2(email, attemptId);
+        if (!Boolean.TRUE.equals(status.getCanRetestNow())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Retest is not available yet");
+        }
+
+        Long examId = attempt.getExam() != null ? attempt.getExam().getId() : null;
+        if (examId == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Attempt has no exam");
+        }
+
+        List<ExamQuestion> examQuestions = examQuestionRepo.findAllByExamIdFetchQuestion(examId);
+        if (examQuestions == null || examQuestions.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "No questions found for this attempt");
+        }
+
+        int numberOfQuestions = examQuestions.size();
+
+        Long materialId = getMaterialIdFromExamQuestions(examQuestions);
+        if (materialId == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot resolve materialId from attempt");
+        }
+
+        String focusText = buildWeakAreasText(attempt, examQuestions);
+
+        GenerateQuestionsResponse generated =
+                questionGenerationService.generateRetest(email, materialId, numberOfQuestions, focusText);
+
+        validateGeneratedResponse(generated, numberOfQuestions);
+
+        // create & start new session immediately
+        String token = UUID.randomUUID().toString();
+        int duration = computeDurationMinutes(numberOfQuestions);
+
+        PracticeSessionData session = new PracticeSessionData();
+        session.sessionToken = token;
+        session.userId = me.getId();
+        session.userFullName = safeTrim(me.getFullName(), 120);
+        session.materialId = materialId;
+        session.numberOfQuestions = numberOfQuestions;
+        session.durationMinutes = duration;
+
+        List<SessionQuestion> qs = new ArrayList<>();
+        for (GeneratedQuestionItemResponse item : generated.getQuestions()) {
+            SessionQuestion sq = new SessionQuestion();
+            sq.key = UUID.randomUUID().toString();
+            sq.item = item;
+            qs.add(sq);
+        }
+        session.questions = qs;
+
+        session.startedAt = LocalDateTime.now();
+        session.deadline = session.startedAt.plusMinutes(session.durationMinutes);
+
+        practiceSessionCache.put(sessionKey(email, token), session);
+
+        return buildSessionResponse(session);
+    }
+
+    private Long getMaterialIdFromExamQuestions(List<ExamQuestion> examQuestions) {
+        for (ExamQuestion eq : examQuestions) {
+            if (eq != null && eq.getQuestion() != null && eq.getQuestion().getMaterial() != null) {
+                return eq.getQuestion().getMaterial().getId();
+            }
+        }
+        return null;
+    }
+
+    private String buildWeakAreasText(ExamAttempt attempt, List<ExamQuestion> examQuestions) {
+        List<AnswerResult> stored = readAnswersJson(attempt.getAnswersJson());
+        Map<Long, AnswerResult> storedMap = stored.stream()
+                .filter(a -> a != null && a.questionId != null)
+                .collect(Collectors.toMap(a -> a.questionId, a -> a, (a, b) -> b));
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("WEAK AREAS from previous attempt:\n");
+
+        int added = 0;
+
+        for (ExamQuestion eq : examQuestions) {
+            if (eq == null || eq.getQuestion() == null) continue;
+            Question q = eq.getQuestion();
+
+            AnswerResult ar = storedMap.get(q.getId());
+            if (ar == null) continue;
+
+            boolean weak;
+            if (ar.questionType == QuestionType.MCQ) {
+                weak = (ar.score == null || ar.score <= 0);
+            } else {
+                int sc = ar.score == null ? 0 : ar.score;
+                int mx = ar.maxScore == null ? 0 : ar.maxScore;
+                weak = (mx <= 0) ? (sc <= 0) : (sc < Math.ceil(mx * 0.7));
+            }
+
+            if (!weak) continue;
+
+            sb.append("- Question: ").append(safeTrim(q.getContent(), 450)).append("\n");
+
+            String analysis = safeTrim(q.getAnalysis(), 450);
+            if (analysis != null && !analysis.isBlank()) {
+                sb.append("  Analysis/Rubric: ").append(analysis).append("\n");
+            }
+
+            if (ar.feedback != null && !ar.feedback.isBlank()) {
+                sb.append("  Feedback: ").append(safeTrim(ar.feedback, 300)).append("\n");
+            }
+
+            added++;
+            if (added >= 12) break;
+        }
+
+        if (added == 0) {
+            sb.append("(No weak items detected. Focus on core concepts in material.)\n");
+        }
+
+        return sb.toString();
+    }
+
+// =========================
     // Internal helper models
     // =========================
 

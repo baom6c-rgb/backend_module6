@@ -85,6 +85,43 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
         return res;
     }
 
+
+    @Override
+    public GenerateQuestionsResponse generateRetest(String currentEmail, Long materialId, int numberOfQuestions, String focusText) {
+
+        User me = userRepo.findByEmail(currentEmail)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        LearningMaterial material = materialRepo.findByIdAndUser(materialId, me)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
+
+        if (material.getStatus() != MaterialStatus.EXTRACTED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
+        }
+
+        String extracted = material.getExtractedText();
+        if (extracted == null || extracted.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Extracted text is empty");
+        }
+
+        String trimmed = extracted.length() > MAX_EXTRACTED_CHARS
+                ? extracted.substring(0, MAX_EXTRACTED_CHARS)
+                : extracted;
+
+        String prompt = promptBuilder.buildRetestPrompt(trimmed, numberOfQuestions, focusText);
+
+        String json = callGeminiWithRetry(prompt, numberOfQuestions);
+
+        GenerateQuestionsResponse res = parseWithRetry(json, trimmed, materialId, numberOfQuestions);
+
+        res.setMaterialId(materialId);
+        res.setNumberOfQuestions(numberOfQuestions);
+
+        QuestionValidator.validate(res, numberOfQuestions);
+
+        return res;
+    }
+
     private GenerateQuestionsResponse parseWithRetry(
             String json,
             String trimmed,

@@ -16,6 +16,7 @@ public interface SystemSettingsService {
     // for other services
     int getPassScore();
     double getMinutesPerQuestion();
+    int getRetestCooldownMinutes();
     boolean isEmailNotificationEnabled();
     String[] getAdminEmails();
 }
