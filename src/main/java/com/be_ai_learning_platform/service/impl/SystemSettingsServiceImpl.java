@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.stream.Collectors;
 
@@ -40,19 +42,63 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Value("${app.settings.default.adminEmails:}")
     private String defaultAdminEmails;
 
+    @Value("${app.settings.default.monthlyReport.enabled:false}")
+    private boolean defaultMonthlyReportEnabled;
+
+    /**
+     * 0 = last day
+     */
+    @Value("${app.settings.default.monthlyReport.dayOfMonth:0}")
+    private int defaultMonthlyReportDayOfMonth;
+
+    /**
+     * HH:mm
+     */
+    @Value("${app.settings.default.monthlyReport.time:23:59}")
+    private String defaultMonthlyReportTime;
+
+    @Value("${app.settings.default.monthlyReport.timeZone:Asia/Bangkok}")
+    private String defaultMonthlyReportTimeZone;
+
     @PostConstruct
     public void initIfMissing() {
         if (repo.existsById(SETTINGS_ID)) return;
 
         SystemSettings s = new SystemSettings();
         s.setId(SETTINGS_ID);
+
         s.setPassScore(defaultPassScore);
         s.setMinutesPerQuestion(defaultMinutesPerQuestion);
         s.setRetestCooldownMinutes(defaultRetestCooldownMinutes);
         s.setEmailNotificationsEnabled(defaultEmailEnabled);
         s.setAdminEmails(normalizeEmails(defaultAdminEmails));
-        s.setUpdatedAt(LocalDateTime.now());
 
+        // ===== monthly report defaults =====
+        s.setMonthlyReportEnabled(defaultMonthlyReportEnabled);
+
+        // clamp 0..31 (0 = last day)
+        int dom = Math.max(0, Math.min(31, defaultMonthlyReportDayOfMonth));
+        s.setMonthlyReportDayOfMonth(dom);
+
+        try {
+            s.setMonthlyReportTime(LocalTime.parse(defaultMonthlyReportTime)); // HH:mm
+        } catch (Exception ex) {
+            s.setMonthlyReportTime(LocalTime.of(23, 59));
+        }
+
+        String tz = (defaultMonthlyReportTimeZone == null || defaultMonthlyReportTimeZone.isBlank())
+                ? "Asia/Bangkok"
+                : defaultMonthlyReportTimeZone.trim();
+        try {
+            ZoneId.of(tz);
+        } catch (Exception ex) {
+            tz = "Asia/Bangkok";
+        }
+        s.setMonthlyReportTimeZone(tz);
+
+        s.setMonthlyReportLastSentYearMonth(null);
+
+        s.setUpdatedAt(LocalDateTime.now());
         repo.save(s);
     }
 
@@ -112,11 +158,9 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
 
     @Override
     public SystemSettingsResponse update(UpdateSystemSettingsRequest req) {
-        if (req == null) {
-            throw new IllegalArgumentException("Request is null");
-        }
+        if (req == null) throw new IllegalArgumentException("Request is null");
 
-        // business guardrails
+        // guardrails (base)
         if (req.getMinutesPerQuestion() == null || req.getMinutesPerQuestion() <= 0) {
             throw new IllegalArgumentException("minutesPerQuestion must be > 0");
         }
@@ -127,16 +171,60 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
             throw new IllegalArgumentException("retestCooldownMinutes must be 0..1440");
         }
 
+        // monthly optional validation
+        Integer dayOfMonth = req.getMonthlyReportDayOfMonth();
+        if (dayOfMonth != null && (dayOfMonth < 0 || dayOfMonth > 31)) {
+            throw new IllegalArgumentException("monthlyReportDayOfMonth must be 0..31 (0 = last day)");
+        }
+
+        LocalTime monthlyTime = null;
+        if (req.getMonthlyReportTime() != null && !req.getMonthlyReportTime().isBlank()) {
+            try {
+                monthlyTime = LocalTime.parse(req.getMonthlyReportTime()); // HH:mm
+            } catch (Exception ex) {
+                throw new IllegalArgumentException("monthlyReportTime must be in HH:mm format");
+            }
+        }
+
+        String tz = req.getMonthlyReportTimeZone();
+        if (tz != null) {
+            tz = tz.trim();
+            if (tz.isBlank()) tz = null;
+            else {
+                try {
+                    ZoneId.of(tz);
+                } catch (Exception ex) {
+                    throw new IllegalArgumentException("monthlyReportTimeZone is invalid IANA zone id");
+                }
+            }
+        }
+
         SystemSettings s = getSettings();
 
+        // base updates
         s.setPassScore(req.getPassScore());
         s.setMinutesPerQuestion(req.getMinutesPerQuestion());
         s.setRetestCooldownMinutes(req.getRetestCooldownMinutes());
         s.setEmailNotificationsEnabled(Boolean.TRUE.equals(req.getEmailNotificationsEnabled()));
         s.setAdminEmails(normalizeEmails(req.getAdminEmails()));
-        s.setUpdatedAt(LocalDateTime.now());
 
+        // monthly updates (optional)
+        if (req.getMonthlyReportEnabled() != null) {
+            s.setMonthlyReportEnabled(Boolean.TRUE.equals(req.getMonthlyReportEnabled()));
+        }
+        if (dayOfMonth != null) {
+            s.setMonthlyReportDayOfMonth(dayOfMonth);
+        }
+        if (monthlyTime != null) {
+            s.setMonthlyReportTime(monthlyTime);
+        }
+        if (tz != null) {
+            s.setMonthlyReportTimeZone(tz);
+        }
+
+        s.setUpdatedAt(LocalDateTime.now());
         repo.save(s);
+
         return toResponse(s);
     }
 
@@ -149,6 +237,13 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         r.setRetestCooldownMinutes(s.getRetestCooldownMinutes());
         r.setEmailNotificationsEnabled(Boolean.TRUE.equals(s.getEmailNotificationsEnabled()));
         r.setAdminEmails(s.getAdminEmails());
+
+        r.setMonthlyReportEnabled(Boolean.TRUE.equals(s.getMonthlyReportEnabled()));
+        r.setMonthlyReportDayOfMonth(s.getMonthlyReportDayOfMonth());
+        r.setMonthlyReportTime(s.getMonthlyReportTime() == null ? "23:59" : s.getMonthlyReportTime().toString());
+        r.setMonthlyReportTimeZone(s.getMonthlyReportTimeZone());
+        r.setMonthlyReportLastSentYearMonth(s.getMonthlyReportLastSentYearMonth());
+
         r.setUpdatedAt(s.getUpdatedAt());
         return r;
     }

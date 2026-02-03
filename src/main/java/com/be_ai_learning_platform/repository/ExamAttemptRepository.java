@@ -5,10 +5,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> {
+
     Optional<ExamAttempt> findByIdAndUserId(Long id, Long userId);
 
     // ✅ Completed = attempt có score (đã chấm)
@@ -65,31 +67,120 @@ public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> 
     Integer getRankAmongStudentsByUser(@Param("userId") Long userId);
 
     @Query("""
-    select ea
-    from ExamAttempt ea
-    join fetch ea.exam e
-    where ea.id = :id and ea.user.id = :userId
-""")
+        select ea
+        from ExamAttempt ea
+        join fetch ea.exam e
+        where ea.id = :id and ea.user.id = :userId
+    """)
     Optional<ExamAttempt> findByIdAndUserIdFetchExam(@Param("id") Long id, @Param("userId") Long userId);
+
     List<ExamAttempt> findByUserIdOrderBySubmitTimeDesc(Long userId);
 
-    // Tính điểm trung bình cho dashboard
-    @Query("SELECT AVG(ea.score) FROM ExamAttempt ea WHERE ea.user.id = :userId")
-    Double getAverageScoreByUserId(Long userId);
+    // ===== Dashboard =====
 
-    // Đếm số bài đạt yêu cầu (score >= passScore của Exam)
-    @Query("SELECT COUNT(ea) FROM ExamAttempt ea WHERE ea.user.id = :userId AND ea.score >= ea.exam.passScore")
-    Long countPassedTests(Long userId);
+    // Tính điểm trung bình cho dashboard (lọc score != null)
+    @Query("SELECT AVG(ea.score) FROM ExamAttempt ea WHERE ea.user.id = :userId AND ea.score IS NOT NULL")
+    Double getAverageScoreByUserId(@Param("userId") Long userId);
+
+    // Đếm số bài đạt yêu cầu (score >= passScore của Exam) - FIX @Param
+    @Query("SELECT COUNT(ea) FROM ExamAttempt ea WHERE ea.user.id = :userId AND ea.score IS NOT NULL AND ea.score >= ea.exam.passScore")
+    Long countPassedTests(@Param("userId") Long userId);
 
     // Sử dụng Native Query để ép buộc query vào bảng vật lý
     @Query(value = "SELECT * FROM exam_attempt WHERE user_id = :userId ORDER BY submit_time DESC", nativeQuery = true)
     List<ExamAttempt> findByUserIdNative(@Param("userId") Long userId);
 
-    @Query("SELECT ea FROM ExamAttempt ea " +
-            "JOIN FETCH ea.user " + // Lấy luôn thông tin User
-            "JOIN FETCH ea.exam " + // Lấy luôn thông tin Exam
-            "LEFT JOIN FETCH ea.learningModule " +
-            "LEFT JOIN FETCH ea.classroom " +
-            "ORDER BY ea.submitTime DESC")
+    @Query("""
+        SELECT ea FROM ExamAttempt ea
+            JOIN FETCH ea.user
+            JOIN FETCH ea.exam
+            LEFT JOIN FETCH ea.learningModule
+            LEFT JOIN FETCH ea.classroom
+        ORDER BY ea.submitTime DESC
+    """)
     List<ExamAttempt> findAllWithUserDetails();
+
+    // ===================== Monthly report (US21) =====================
+
+    /**
+     * Tổng số bài làm trong khoảng thời gian: attempt đã nộp (submit_time != null)
+     */
+    @Query(value = """
+        SELECT COUNT(*)
+        FROM exam_attempt ea
+        WHERE ea.submit_time IS NOT NULL
+          AND ea.submit_time >= :start
+          AND ea.submit_time <= :end
+        """, nativeQuery = true)
+    long countSubmittedInRange(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    /**
+     * Học viên làm nhiều nhất trong tháng (theo số attempt submit)
+     * return: [user_id, email, full_name, attempt_count]
+     */
+    @Query(value = """
+        SELECT u.id AS user_id, u.email AS email, u.full_name AS full_name, COUNT(*) AS attempt_count
+        FROM exam_attempt ea
+        JOIN `user` u ON u.id = ea.user_id
+        WHERE ea.submit_time IS NOT NULL
+          AND ea.submit_time >= :start
+          AND ea.submit_time <= :end
+        GROUP BY u.id, u.email, u.full_name
+        ORDER BY attempt_count DESC
+        LIMIT 1
+        """, nativeQuery = true)
+    List<Object[]> findTopStudentByAttemptCountInRange(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    /**
+     * Học viên có kết quả tốt nhất (AVG(score) cao nhất) trong tháng
+     * return: [user_id, email, full_name, avg_score]
+     */
+    @Query(value = """
+        SELECT u.id AS user_id, u.email AS email, u.full_name AS full_name, AVG(ea.score) AS avg_score
+        FROM exam_attempt ea
+        JOIN `user` u ON u.id = ea.user_id
+        WHERE ea.submit_time IS NOT NULL
+          AND ea.score IS NOT NULL
+          AND ea.submit_time >= :start
+          AND ea.submit_time <= :end
+        GROUP BY u.id, u.email, u.full_name
+        ORDER BY avg_score DESC
+        LIMIT 1
+        """, nativeQuery = true)
+    List<Object[]> findBestStudentByAvgScoreInRange(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    /**
+     * Học viên có kết quả kém nhất (AVG(score) thấp nhất) trong tháng
+     * return: [user_id, email, full_name, avg_score]
+     */
+    @Query(value = """
+        SELECT u.id AS user_id, u.email AS email, u.full_name AS full_name, AVG(ea.score) AS avg_score
+        FROM exam_attempt ea
+        JOIN `user` u ON u.id = ea.user_id
+        WHERE ea.submit_time IS NOT NULL
+          AND ea.score IS NOT NULL
+          AND ea.submit_time >= :start
+          AND ea.submit_time <= :end
+        GROUP BY u.id, u.email, u.full_name
+        ORDER BY avg_score ASC
+        LIMIT 1
+        """, nativeQuery = true)
+    List<Object[]> findWorstStudentByAvgScoreInRange(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    /**
+     * Danh sách attempt đã nộp trong range, fetch đủ dữ liệu để export excel:
+     * user + exam + module + classroom
+     */
+    @Query("""
+        SELECT ea FROM ExamAttempt ea
+            JOIN FETCH ea.user
+            JOIN FETCH ea.exam
+            LEFT JOIN FETCH ea.learningModule
+            LEFT JOIN FETCH ea.classroom
+        WHERE ea.submitTime IS NOT NULL
+          AND ea.submitTime >= :start
+          AND ea.submitTime <= :end
+        ORDER BY ea.submitTime DESC
+    """)
+    List<ExamAttempt> findSubmittedAttemptsInRangeWithDetails(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 }
