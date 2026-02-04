@@ -10,6 +10,10 @@ public class AdminAnalyticsAiInsightResponse {
     private List<String> keyProblems;
     private List<String> atRiskPatterns;
     private List<String> recommendedActions;
+
+    // ✅ NEW: AI feedback cho từng học viên (tối đa 5)
+    private List<AtRiskStudentResponse> students;
+
     private String confidence; // LOW | MEDIUM | HIGH
     private String generatedAt; // ISO datetime
 }

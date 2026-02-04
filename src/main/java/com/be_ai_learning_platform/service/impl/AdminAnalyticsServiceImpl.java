@@ -60,6 +60,9 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
                 keyword
         );
 
+        // ✅ Danh sách đầy đủ học viên đã làm bài (không filter theo mức độ)
+        List<AtRiskStudentResponse> students = buildStudents(studentAgg);
+
         List<AtRiskStudentResponse> atRisk = buildAtRisk(studentAgg);
 
         List<TimeSeriesPointResponse> series = new ArrayList<>();
@@ -84,9 +87,85 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
         res.setAvgScore(avgScore);
         res.setPassRate(passRate);
         res.setFailRate(failRate);
+        res.setStudents(students);
         res.setAtRiskStudents(atRisk);
         res.setTimeSeries(series);
         return res;
+    }
+
+    /**
+     * Build danh sách đầy đủ học viên (không filter theo mức độ).
+     * FE dùng field này để render bảng "Danh sách học viên đã làm bài".
+     *
+     * Lưu ý: "Tiến độ" được hiểu là passRate = 1 - failRate.
+     */
+    private List<AtRiskStudentResponse> buildStudents(List<AdminAnalyticsRepository.StudentAggRow> rows) {
+        if (rows == null || rows.isEmpty()) return List.of();
+
+        final double FAIL_RATE_HIGH = 0.50;
+        List<AtRiskStudentResponse> out = new ArrayList<>();
+
+        for (AdminAnalyticsRepository.StudentAggRow r : rows) {
+            long attempts = nvl(r.getAttemptsCount());
+            if (attempts <= 0) continue;
+
+            long failed = nvl(r.getFailedCount());
+            double failRate = attempts == 0 ? 0.0 : (failed * 1.0 / attempts);
+            double passRate = 1.0 - failRate;
+            double avgScore = r.getAvgScore() == null ? 0.0 : r.getAvgScore();
+
+            String level = classifyLevel(avgScore); // ✅ TOT/TRUNG_BINH/YEU
+
+            // riskScore dùng để sort ưu tiên (nguy hiểm -> đạt)
+            List<String> reasons = new ArrayList<>();
+            int riskScore = 0;
+
+            if ("YEU".equals(level)) {
+                reasons.add("Điểm dưới 50 (Yếu)");
+                riskScore += 60;
+            } else if ("TRUNG_BINH".equals(level)) {
+                reasons.add("Điểm từ 50 đến dưới 80 (Trung bình)");
+                riskScore += 30;
+            } else {
+                reasons.add("Điểm từ 80 trở lên (Tốt)");
+                riskScore += 5;
+            }
+
+            if (failRate >= FAIL_RATE_HIGH) {
+                reasons.add("Tỷ lệ trượt cao");
+                riskScore += 40;
+            }
+
+            if (attempts >= 8 && !"TOT".equals(level)) {
+                reasons.add("Làm nhiều bài nhưng kết quả chưa cải thiện");
+                riskScore += 20;
+            }
+
+            if (riskScore > 100) riskScore = 100;
+
+            AtRiskStudentResponse dto = new AtRiskStudentResponse();
+            dto.setUserId(r.getUserId());
+            dto.setFullName(r.getFullName());
+            dto.setEmail(r.getEmail());
+            dto.setAttemptsCount(attempts);
+            dto.setAvgScore(avgScore);
+            dto.setFailRate(failRate);
+            dto.setPassRate(passRate);
+            dto.setLastAttemptAt(r.getLastAttemptAt() == null ? null : r.getLastAttemptAt().format(ISO));
+            dto.setRiskScore(riskScore);
+            dto.setRiskLevel(level);
+            dto.setReasons(reasons.toArray(new String[0]));
+
+            out.add(dto);
+        }
+
+        // sort: ưu tiên riskScore cao, rồi avgScore thấp
+        out.sort(Comparator
+                .comparing(AtRiskStudentResponse::getRiskScore, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(AtRiskStudentResponse::getAvgScore, Comparator.nullsLast(Comparator.naturalOrder()))
+        );
+
+        return out;
     }
 
     /**
@@ -111,6 +190,7 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
 
             long failed = nvl(r.getFailedCount());
             double failRate = attempts == 0 ? 0.0 : (failed * 1.0 / attempts);
+            double passRate = 1.0 - failRate;
             double avgScore = r.getAvgScore() == null ? 0.0 : r.getAvgScore();
 
             // ===== classification =====
@@ -157,6 +237,7 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
             dto.setAttemptsCount(attempts);
             dto.setAvgScore(avgScore);
             dto.setFailRate(failRate);
+            dto.setPassRate(passRate);
             dto.setLastAttemptAt(r.getLastAttemptAt() == null ? null : r.getLastAttemptAt().format(ISO));
             dto.setRiskScore(riskScore);
             dto.setRiskLevel(level); // ✅ TOT/TRUNG_BINH/YEU
