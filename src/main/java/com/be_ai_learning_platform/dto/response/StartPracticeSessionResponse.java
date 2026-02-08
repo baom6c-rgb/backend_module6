@@ -11,5 +11,9 @@ public class StartPracticeSessionResponse {
     private Integer durationMinutes;
     private LocalDateTime startedAt;
     private LocalDateTime deadline;
+
+    // ✅ NEW
+    private String examTitle;
+
     private List<PracticeQuestionV2Response> questions;
 }

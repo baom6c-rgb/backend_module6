@@ -40,6 +40,8 @@ public class ChatbotServiceImpl implements ChatbotService {
     // ===== US17 guardrails =====
     private static final int MAX_KEYWORDS_CHARS = 80;
     private static final int MAX_KEYWORDS_WORDS = 8;
+
+    // ✅ relevance should be stricter (meaningful tokens)
     private static final int MIN_RELEVANT_HITS = 1;
 
     private static final int MAX_CONTEXT_CHARS = 1800;
@@ -48,6 +50,14 @@ public class ChatbotServiceImpl implements ChatbotService {
     private static final int MAX_REPLY_CHARS = 520;
     private static final int MAX_BULLETS = 5;
     private static final int MIN_BULLETS = 3;
+
+    /**
+     * ✅ Stop words để tránh match linh tinh kiểu: "là", "ai", "gì", "the", ...
+     * (mày có thể bổ sung thêm theo thực tế)
+     */
+    private static final Set<String> STOP_WORDS = Set.of(
+            "la", "là", "ai", "gi", "gì", "nao", "nào", "the", "a", "an", "and", "or"
+    );
 
     // ================= PUBLIC API =================
 
@@ -93,16 +103,35 @@ public class ChatbotServiceImpl implements ChatbotService {
         String validatedKeywords = validateKeywords(keywords);
         LearningMaterial material = session.getMaterial();
 
-        // relevance check
-        int hits = countKeywordHits(material.getExtractedText(), validatedKeywords);
-        if (hits < MIN_RELEVANT_HITS) {
-            throw badRequest("Chỉ được hỏi các từ khóa liên quan đến nội dung bài học hiện tại.");
-        }
-
-        // save user message
+        // ✅ luôn lưu message của user để UI render lịch sử ổn định
         saveMessage(session, SenderType.USER, validatedKeywords);
 
+        // ✅ relevance check: dùng meaningful tokens để tránh pass sai
+        int hits = countKeywordHits(material.getExtractedText(), validatedKeywords);
+        if (hits < MIN_RELEVANT_HITS) {
+            String msg = notInMaterialAnswer(validatedKeywords);
+            saveMessage(session, SenderType.AI, msg);
+
+            ChatAskResponse res = new ChatAskResponse();
+            res.setSessionId(sessionId);
+            res.setAnswer(msg);
+            return res;
+        }
+
+        // ✅ build context cũng phải meaningful, tránh match "AI" / "là" / "ai" linh tinh
         String context = buildContext(material.getExtractedText(), validatedKeywords);
+
+        // ✅ nếu context rỗng => coi như out-of-scope
+        if (context == null || context.isBlank()) {
+            String msg = notInMaterialAnswer(validatedKeywords);
+            saveMessage(session, SenderType.AI, msg);
+
+            ChatAskResponse res = new ChatAskResponse();
+            res.setSessionId(sessionId);
+            res.setAnswer(msg);
+            return res;
+        }
+
         String prompt = buildPrompt(validatedKeywords, context);
 
         String aiAnswer = responsesClient.generateText(prompt);
@@ -146,6 +175,13 @@ public class ChatbotServiceImpl implements ChatbotService {
     }
 
     /**
+     * ✅ Khi user hỏi ngoài phạm vi tài liệu hiện tại
+     */
+    private String notInMaterialAnswer(String keywords) {
+        return "Nội dung bạn vừa hỏi không tồn tại trong tài liệu/bài quiz hiện tại, nên mình không thể hỗ trợ phần này.";
+    }
+
+    /**
      * US17: keyword-only validation
      */
     private String validateKeywords(String raw) {
@@ -171,27 +207,52 @@ public class ChatbotServiceImpl implements ChatbotService {
         return String.join(" ", words);
     }
 
+    /**
+     * ✅ Tách keyword meaningful:
+     * - bỏ stopwords ("là", "ai", ...)
+     * - bỏ token quá ngắn (<3)
+     * - distinct để tránh đếm lặp
+     */
+    private List<String> extractMeaningfulTokens(String keywords) {
+        String norm = normalizeSpaces(keywords);
+        if (norm.isBlank()) return List.of();
+
+        return Arrays.stream(norm.split("\\s+"))
+                .map(this::normalize)           // lowercase + NFKC
+                .map(String::trim)
+                .filter(t -> !t.isBlank())
+                .filter(t -> t.length() >= 3)
+                .filter(t -> !STOP_WORDS.contains(t))
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
     private int countKeywordHits(String text, String keywords) {
         if (text == null || text.isBlank()) return 0;
+
         String hay = normalize(text);
+        List<String> tokens = extractMeaningfulTokens(keywords);
+
+        // nếu toàn stopwords => coi như out-of-scope luôn
+        if (tokens.isEmpty()) return 0;
+
         int hits = 0;
-        for (String k : keywords.split("\\s+")) {
-            if (hay.contains(normalize(k))) hits++;
+        for (String t : tokens) {
+            if (hay.contains(t)) hits++;
         }
         return hits;
     }
 
     private String buildContext(String extractedText, String keywords) {
-        if (extractedText == null) return "";
+        if (extractedText == null || extractedText.isBlank()) return "";
 
-        Set<String> keys = Arrays.stream(keywords.split("\\s+"))
-                .map(this::normalize)
-                .collect(Collectors.toSet());
+        List<String> tokens = extractMeaningfulTokens(keywords);
+        if (tokens.isEmpty()) return "";
 
         StringBuilder sb = new StringBuilder();
         for (String para : extractedText.split("\\n\\s*\\n")) {
             String pNorm = normalize(para);
-            if (keys.stream().anyMatch(pNorm::contains)) {
+            if (tokens.stream().anyMatch(pNorm::contains)) {
                 sb.append(para).append("\n---\n");
                 if (sb.length() > MAX_CONTEXT_CHARS) break;
             }

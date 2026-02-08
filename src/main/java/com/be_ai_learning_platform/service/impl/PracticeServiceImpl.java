@@ -1,14 +1,40 @@
 package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.ai.GeminiResponsesClient;
-import com.be_ai_learning_platform.dto.request.*;
-import com.be_ai_learning_platform.dto.response.*;
-import com.be_ai_learning_platform.entity.*;
+import com.be_ai_learning_platform.dto.request.GeneratePracticeSessionRequest;
+import com.be_ai_learning_platform.dto.request.PracticeGenerateRequest;
+import com.be_ai_learning_platform.dto.request.StartPracticeSessionRequest;
+import com.be_ai_learning_platform.dto.request.SubmitPracticeRequest;
+import com.be_ai_learning_platform.dto.request.SubmitPracticeSessionRequest;
+import com.be_ai_learning_platform.dto.response.AttemptDetailResponse;
+import com.be_ai_learning_platform.dto.response.AttemptQuestionResponse;
+import com.be_ai_learning_platform.dto.response.AttemptReviewItemResponse;
+import com.be_ai_learning_platform.dto.response.AttemptReviewResponse;
+import com.be_ai_learning_platform.dto.response.GeneratePracticeSessionResponse;
+import com.be_ai_learning_platform.dto.response.GenerateQuestionsResponse;
+import com.be_ai_learning_platform.dto.response.GeneratedQuestionItemResponse;
+import com.be_ai_learning_platform.dto.response.PracticeQuestionV2Response;
+import com.be_ai_learning_platform.dto.response.RetestStatusResponse;
+import com.be_ai_learning_platform.dto.response.StartPracticeResponse;
+import com.be_ai_learning_platform.dto.response.StartPracticeSessionResponse;
+import com.be_ai_learning_platform.dto.response.SubmitPracticeResponse;
+import com.be_ai_learning_platform.dto.response.SubmitPracticeV2Response;
+import com.be_ai_learning_platform.entity.Exam;
+import com.be_ai_learning_platform.entity.ExamAttempt;
+import com.be_ai_learning_platform.entity.ExamQuestion;
+import com.be_ai_learning_platform.entity.LearningMaterial;
+import com.be_ai_learning_platform.entity.Question;
+import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.ExamResult;
 import com.be_ai_learning_platform.entity.enums.ExamType;
 import com.be_ai_learning_platform.entity.enums.MaterialStatus;
 import com.be_ai_learning_platform.entity.enums.QuestionType;
-import com.be_ai_learning_platform.repository.*;
+import com.be_ai_learning_platform.repository.ExamAttemptRepository;
+import com.be_ai_learning_platform.repository.ExamQuestionRepository;
+import com.be_ai_learning_platform.repository.ExamRepository;
+import com.be_ai_learning_platform.repository.LearningMaterialRepository;
+import com.be_ai_learning_platform.repository.QuestionRepository;
+import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.PracticeService;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
 import com.be_ai_learning_platform.service.SystemSettingsService;
@@ -30,20 +56,20 @@ public class PracticeServiceImpl implements PracticeService {
 
     private static final int MAX_AI_FEEDBACK_CHARS = 3500;
 
-    // ✅ Tổng điểm theo loại câu hỏi
+    // Tổng điểm theo loại câu hỏi
     private static final int TOTAL_SCORE = 100;
     private static final int MCQ_TOTAL_POINTS = 70;
     private static final int ESSAY_TOTAL_POINTS = 30;
 
-    // giữ nguyên behavior validate (trước đây lấy từ properties)
+    // validate behavior
     private static final int DEFAULT_MAX_QUESTIONS = 20;
 
-    // clamp duration (vì settings chỉ có minutesPerQuestion)
+    // clamp duration (settings chỉ có minutesPerQuestion)
     private static final int DURATION_MIN_MINUTES = 5;
     private static final int DURATION_MAX_MINUTES = 120;
 
-    // giữ nguyên logic format feedback (trước đây lấy từ properties)
-    private static final int DEFAULT_FEEDBACK_MAX_BULLETS = 8;
+    // title
+    private static final int EXAM_TITLE_MAX_CHARS = 120;
 
     private final UserRepository userRepo;
     private final LearningMaterialRepository materialRepo;
@@ -87,9 +113,9 @@ public class PracticeServiceImpl implements PracticeService {
         this.settingsService = settingsService;
     }
 
-    // =========================
-    // Preview (cache)
-    // =========================
+    // =========================================================
+    // V1 - Preview (cache)
+    // =========================================================
     @Override
     public GenerateQuestionsResponse generatePreview(String email, PracticeGenerateRequest req) {
         validateGenerateRequest(req);
@@ -103,34 +129,32 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
         }
 
-        // ✅ Backward compatibility: client gửi token thì thử lấy cache
+        // Backward compatibility: client gửi token thì thử lấy cache
         String incomingToken = normalizeToken(req.getPreviewToken());
         if (!incomingToken.isBlank()) {
             GenerateQuestionsResponse cached = getCachedPreview(email, incomingToken);
             if (cached != null) return cached;
         }
 
-        // ✅ Generate mới
+        // Generate mới
         GenerateQuestionsResponse generated =
                 questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
 
         validateGeneratedResponse(generated, req.getNumberOfQuestions());
 
-        // ✅ Server tự tạo token cho preview (source of truth)
+        // Server tự tạo token cho preview (source of truth)
         String token = UUID.randomUUID().toString();
-
-        // ✅ set vào response để FE nhận được
         generated.setPreviewToken(token);
 
-        // ✅ cache theo token mới
+        // cache theo token mới
         practiceSessionCache.put(previewKey(email, token), generated);
 
         return generated;
     }
 
-    // =========================
-    // Start (save mixed questions)
-    // =========================
+    // =========================================================
+    // V1 - Start (save questions to DB)
+    // =========================================================
     @Override
     @Transactional
     public StartPracticeResponse start(String email, PracticeGenerateRequest req) {
@@ -145,10 +169,11 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
         }
 
-        // ✅ Strict mode: bắt buộc token để đảm bảo không gọi AI lần 2
+        // Strict mode: bắt buộc token để đảm bảo không gọi AI lần 2
         String token = normalizeToken(req.getPreviewToken());
         if (token.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "previewToken is required. Please generate preview first.");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "previewToken is required. Please generate preview first.");
         }
 
         GenerateQuestionsResponse generated = getCachedPreview(email, token);
@@ -158,15 +183,24 @@ public class PracticeServiceImpl implements PracticeService {
 
         validateGeneratedResponse(generated, req.getNumberOfQuestions());
 
-        // ✅ dùng xong xoá cache để tránh reuse
+        // dùng xong xoá cache để tránh reuse
         practiceSessionCache.invalidate(previewKey(email, token));
 
         Exam exam = new Exam();
         exam.setUser(me);
         exam.setType(ExamType.PRACTICE);
-        exam.setDurationMinutes(req.getDurationMinutes() != null ? req.getDurationMinutes() : computeDurationMinutes(req.getNumberOfQuestions()));
+
+        int duration = (req.getDurationMinutes() != null)
+                ? req.getDurationMinutes()
+                : computeDurationMinutes(req.getNumberOfQuestions());
+        exam.setDurationMinutes(duration);
+
         exam.setPassScore(settingsService.getPassScore());
         exam.setCreatedAt(LocalDateTime.now());
+
+        // ✅ AI đặt tên bài test theo học liệu (fallback nếu AI lỗi)
+        exam.setTitle(generateExamTitle(me, material, req.getNumberOfQuestions()));
+
         exam = examRepo.save(exam);
 
         for (GeneratedQuestionItemResponse item : generated.getQuestions()) {
@@ -184,7 +218,7 @@ public class PracticeServiceImpl implements PracticeService {
                 q.setOptionsJson(writeOptionsJson(item.getOptions()));
                 q.setAnalysis(safeTrim(item.getAnalysis(), 2000));
             } else {
-                // ESSAY: không lưu sampleAnswer vào correctAnswer (tránh lỗi truncate). Lưu rubric vào analysis.
+                // ESSAY: không lưu sampleAnswer vào correctAnswer. Lưu rubric vào analysis.
                 q.setCorrectAnswer(null);
                 q.setOptionsJson(null);
                 q.setAnalysis(writeRubricJson(item.getSampleAnswer(), item.getKeywords(), item.getMaxScore()));
@@ -210,9 +244,9 @@ public class PracticeServiceImpl implements PracticeService {
         return new StartPracticeResponse(attempt.getId());
     }
 
-    // =========================
-    // Attempt detail
-    // =========================
+    // =========================================================
+    // V1 - Attempt detail
+    // =========================================================
     @Transactional(readOnly = true)
     @Override
     public AttemptDetailResponse getAttempt(String email, Long attemptId) {
@@ -248,9 +282,9 @@ public class PracticeServiceImpl implements PracticeService {
         return res;
     }
 
-    // =========================
-    // Submit: tổng điểm = 100, chia 70 MCQ / 30 ESSAY theo SỐ CÂU
-    // =========================
+    // =========================================================
+    // V1 - Submit (70/30 theo số câu, tổng 100)
+    // =========================================================
     @Transactional
     @Override
     public SubmitPracticeResponse submit(String email, Long attemptId, SubmitPracticeRequest req) {
@@ -282,7 +316,7 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Exam has no questions");
         }
 
-        // ✅ Map answer theo questionId
+        // Map answer theo questionId
         Map<Long, SubmitPracticeRequest.AnswerItem> answerByQid = req.getAnswers().stream()
                 .filter(a -> a.getQuestionId() != null)
                 .collect(Collectors.toMap(
@@ -291,7 +325,7 @@ public class PracticeServiceImpl implements PracticeService {
                         (a, b) -> b
                 ));
 
-        // ✅ Count số câu theo loại
+        // Count số câu theo loại
         List<Question> mcqQuestions = examQuestions.stream()
                 .filter(q -> q.getQuestionType() == QuestionType.MCQ)
                 .toList();
@@ -302,8 +336,7 @@ public class PracticeServiceImpl implements PracticeService {
         int mcqCount = mcqQuestions.size();
         int essayCount = essayQuestions.size();
 
-        // ✅ Allocate điểm nguyên theo số câu để tổng đúng 70/30 tuyệt đối
-        // Nếu thiếu 1 loại: loại còn lại ăn full 100
+        // Allocate điểm tuyệt đối 70/30, nếu thiếu 1 loại thì loại còn lại ăn 100
         int mcqBudget = (mcqCount > 0 && essayCount > 0) ? MCQ_TOTAL_POINTS : (mcqCount > 0 ? TOTAL_SCORE : 0);
         int essayBudget = (mcqCount > 0 && essayCount > 0) ? ESSAY_TOTAL_POINTS : (essayCount > 0 ? TOTAL_SCORE : 0);
 
@@ -361,7 +394,7 @@ public class PracticeServiceImpl implements PracticeService {
                     perQuestionFeedback = (fb.feedback == null ? "" : fb.feedback) + " (fallback: AI tạm lỗi)";
                 }
 
-                // ✅ Quy đổi điểm AI (0..10) -> thang điểm ESSAY của câu (chia theo số câu)
+                // Quy đổi điểm AI (0..10) -> thang điểm maxScore của câu
                 int score = (int) Math.round((aiScore10 / 10.0) * maxScore);
                 score = Math.max(0, Math.min(score, maxScore));
 
@@ -391,16 +424,25 @@ public class PracticeServiceImpl implements PracticeService {
         // AI feedback tổng (sau khi grade)
         String aiFeedback = "";
         try {
-            String prompt = buildAiFeedbackPrompt(examQuestions, results, scorePct);
+            String prompt = buildAiFeedbackPrompt(me.getFullName(), examQuestions, results, scorePct);
             aiFeedback = safeTrim(responsesClient.generateText(prompt), MAX_AI_FEEDBACK_CHARS);
         } catch (Exception e) {
-            e.printStackTrace();
+            // keep silent, fallback below
         }
 
         if (aiFeedback == null || aiFeedback.isBlank()) {
             aiFeedback = """
-AI feedback tạm thời chưa sẵn sàng (có thể do quota/timeout).
-Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết từng câu (đúng/sai + giải thích + gợi ý ôn lại).
+Chào bạn,
+Điểm mạnh:
+- Bạn đã hoàn thành bài và có nỗ lực trả lời.
+- Một số câu làm đúng hướng theo học liệu.
+Điểm yếu:
+- Một số ý trọng tâm còn thiếu/nhầm.
+- Cách trình bày chưa rõ, thiếu keywords quan trọng.
+Gợi ý ôn tập:
+- Bấm “Xem lại đáp án” để xem câu sai và giải thích chi tiết.
+- Ôn lại khái niệm chính và ví dụ trong học liệu.
+- Làm lại bài dưới giới hạn thời gian để tăng tốc độ.
 """.trim();
         }
 
@@ -427,9 +469,9 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         return res;
     }
 
-    // =========================
-    // Review
-    // =========================
+    // =========================================================
+    // V1 - Review
+    // =========================================================
     @Transactional(readOnly = true)
     @Override
     public AttemptReviewResponse getReview(String email, Long attemptId) {
@@ -472,6 +514,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
 
             if (q.getQuestionType() == QuestionType.MCQ) {
                 item.setOptions(readOptionsJson(q.getOptionsJson()));
+
                 String right = normalizeChoice(q.getCorrectAnswer());
                 String sel = ar != null ? normalizeChoice(ar.selectedAnswer) : "";
 
@@ -498,7 +541,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
 
                 item.setScore(score);
                 item.setMaxScore(max);
-                item.setIsCorrect(max > 0 && score >= max); // perfect mới "đúng"
+                item.setIsCorrect(max > 0 && score >= max); // perfect mới coi là "đúng"
                 item.setFeedback(ar != null ? ar.feedback : "");
             }
 
@@ -515,10 +558,9 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         return res;
     }
 
-    // =========================
+    // =========================================================
     // V2 - no preview, no DB until submit
-    // =========================
-
+    // =========================================================
     @Override
     public GeneratePracticeSessionResponse generateSessionV2(String email, GeneratePracticeSessionRequest req) {
         validateGenerateV2Request(req);
@@ -603,7 +645,6 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         if (!Objects.equals(session.userId, me.getId())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Session does not belong to current user");
         }
-
         if (session.startedAt == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Session is not started yet");
         }
@@ -657,10 +698,10 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
                 int maxScore = Math.max(0, mcqMax.getOrDefault(sq.key, 0));
                 int score = isCorrect ? maxScore : 0;
 
-                resultsV2.add(AnswerResultV2.forMcq(sq.key, sel, right, score, maxScore,
-                        isCorrect ? "Đúng" : "Sai"));
+                resultsV2.add(AnswerResultV2.forMcq(sq.key, sel, right, score, maxScore, isCorrect ? "Đúng" : "Sai"));
                 totalEarned += score;
                 totalMax += maxScore;
+
             } else {
                 String textAnswer = a != null ? safeTrim(a.getTextAnswer(), 5000) : "";
                 Rubric rubric = new Rubric(
@@ -696,6 +737,10 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         exam.setDurationMinutes(session.durationMinutes);
         exam.setPassScore(settingsService.getPassScore());
         exam.setCreatedAt(LocalDateTime.now());
+
+        // ✅ AI đặt tên bài test theo học liệu (fallback nếu AI lỗi)
+        exam.setTitle(generateExamTitle(me, material, session.numberOfQuestions == null ? 0 : session.numberOfQuestions));
+
         exam = examRepo.save(exam);
 
         // persist questions + map key->questionId
@@ -807,11 +852,9 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         return res;
     }
 
-
-// =========================
-// V2 - Retest
-// =========================
-
+    // =========================================================
+    // V2 - Retest
+    // =========================================================
     @Override
     @Transactional(readOnly = true)
     public RetestStatusResponse getRetestStatusV2(String email, Long attemptId) {
@@ -978,10 +1021,9 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         return sb.toString();
     }
 
-// =========================
+    // =========================================================
     // Internal helper models
-    // =========================
-
+    // =========================================================
     private static class PracticeSessionData {
         public String sessionToken;
         public Long userId;
@@ -1098,7 +1140,7 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
     }
 
     private static class EssayScore {
-        public int score;
+        public int score;       // 0..10
         public String feedback;
 
         public EssayScore(int score, String feedback) {
@@ -1114,9 +1156,71 @@ Bạn có thể bấm “Xem lại đáp án” để xem nhận xét chi tiết
         public AiEssayGrade() {}
     }
 
-    // =========================
+    // =========================================================
+    // Exam title by AI (fallback safe)
+    // =========================================================
+    private String generateExamTitle(User me, LearningMaterial material, int numberOfQuestions) {
+        String materialName = resolveMaterialName(material);
+        String fallback = safeTrim("Practice - " + materialName, EXAM_TITLE_MAX_CHARS);
+
+        try {
+            String hint = resolveMaterialHint(material);
+
+            String prompt = """
+Bạn là trợ giảng. Hãy đặt 1 tiêu đề ngắn (tối đa 10 từ, <= 120 ký tự) cho một bài luyện tập.
+Yêu cầu:
+- Tiếng Việt, ngắn gọn, rõ chủ đề.
+- Không dùng dấu ngoặc kép.
+- Không thêm emoji/ký tự lạ.
+- Chỉ trả về đúng 1 dòng tiêu đề.
+
+Thông tin:
+- Học viên: %s
+- Số câu: %d
+- Gợi ý học liệu (trích đoạn): %s
+""".formatted(
+                    safeTrim(me.getFullName(), 80),
+                    Math.max(0, numberOfQuestions),
+                    hint
+            );
+
+            String raw = responsesClient.generateText(prompt);
+            String title = raw == null ? "" : raw.replaceAll("[\\r\\n]+", " ").trim();
+            title = safeTrim(title, EXAM_TITLE_MAX_CHARS);
+
+            if (title.isBlank()) return fallback;
+            return title;
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private String resolveMaterialName(LearningMaterial material) {
+        if (material == null) return "Material";
+
+        String name = material.getFileName();
+        if (name != null && !name.isBlank()) {
+            return safeTrim(name, 80);
+        }
+
+        return "Material #" + material.getId();
+    }
+
+
+    private String resolveMaterialHint(LearningMaterial material) {
+        if (material == null) return "";
+        try {
+            String extracted = material.getExtractedText();
+            if (extracted == null) extracted = "";
+            return safeTrim(extracted, 1200);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    // =========================================================
     // ESSAY: AI grading helpers
-    // =========================
+    // =========================================================
     private AiEssayGrade gradeEssayByAi(Question q, String userAnswer, Rubric rubric) {
         String ua = userAnswer == null ? "" : userAnswer.trim();
         if (ua.isBlank()) {
@@ -1189,6 +1293,7 @@ Bài làm học viên: %s
         if (text == null) return "";
         String t = text.trim();
 
+        // remove code fences
         if (t.startsWith("```")) {
             t = t.replaceFirst("^```[a-zA-Z]*\\s*", "");
             t = t.replaceFirst("\\s*```\\s*$", "");
@@ -1201,19 +1306,21 @@ Bài làm học viên: %s
             t = t.substring(start, end + 1).trim();
         }
 
+        // tolerate trailing commas
         t = t.replaceAll(",\\s*([}\\]])", "$1");
         return t;
     }
 
-    // =========================
+    // =========================================================
     // Store rubric as JSON in Question.analysis for ESSAY
-    // =========================
-    private String writeRubricJson(String sampleAnswer, List<String> keywords, Integer maxScore) {
+    // =========================================================
+    private String writeRubricJson(String sampleAnswer, List<String> keywords, Integer maxScoreIgnored) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("sampleAnswer", safeTrim(sampleAnswer, 2000));
         data.put("keywords", keywords == null ? List.of() : keywords);
         // maxScore trong rubric giữ 10 (scale AI), điểm thật chia theo số câu sẽ tính ở submit()
         data.put("maxScore", 10);
+
         try {
             return om.writeValueAsString(data);
         } catch (Exception e) {
@@ -1248,8 +1355,7 @@ Bài làm học viên: %s
 
         List<String> kws = rubric.keywords == null ? List.of() : rubric.keywords;
         if (kws.isEmpty()) {
-            int s = 5;
-            return new EssayScore(s, "Có trả lời nhưng rubric chưa đủ rõ, hệ thống chấm tạm theo mức trung bình.");
+            return new EssayScore(5, "Có trả lời nhưng rubric chưa đủ rõ, hệ thống chấm tạm theo mức trung bình.");
         }
 
         String lower = a.toLowerCase(Locale.ROOT);
@@ -1267,11 +1373,12 @@ Bài làm học viên: %s
         if (ratio < 0.2) {
             return new EssayScore(0, "Chưa đúng ý trọng tâm.");
         }
+
         int score10 = (int) Math.round(ratio * 10);
 
-        String fb;
-        if (missing.isEmpty()) fb = "Tốt ✅ Đủ ý chính theo rubric.";
-        else fb = "Thiếu ý: " + String.join(", ", missing);
+        String fb = missing.isEmpty()
+                ? "Tốt ✅ Đủ ý chính theo rubric."
+                : "Thiếu ý: " + String.join(", ", missing);
 
         return new EssayScore(Math.max(0, Math.min(score10, 10)), fb);
     }
@@ -1293,45 +1400,67 @@ Bài làm học viên: %s
         }
     }
 
-    private String buildAiFeedbackPrompt(List<Question> questions, List<AnswerResult> results, int scorePct) {
+    // =========================================================
+    // AI feedback prompt builders
+    // =========================================================
+    private String buildAiFeedbackPrompt(String userFullName, List<Question> questions, List<AnswerResult> results, int scorePct) {
         Map<Long, AnswerResult> map = results.stream()
                 .collect(Collectors.toMap(a -> a.questionId, a -> a, (a, b) -> b));
 
+        String name = (userFullName == null || userFullName.isBlank()) ? "bạn" : userFullName.trim();
+
         StringBuilder sb = new StringBuilder();
         sb.append("""
-Bạn là trợ giảng. Hãy nhận xét bài làm của học viên NGẮN GỌN nhưng SẮC NÉT bằng tiếng Việt.
-Mục tiêu: chỉ ra câu sai, vì sao sai (dựa trên đáp án đúng/đáp án mẫu), và gợi ý ôn tập.
-Không bịa kiến thức ngoài phạm vi câu hỏi.
-Định dạng:
-- Tổng quan (2-3 gạch đầu dòng)
-- Lỗi sai nổi bật (liệt kê theo số câu)
-- Gợi ý cải thiện (3-5 gạch đầu dòng)
+Bạn là trợ giảng. Hãy nhận xét bài làm của học viên bằng tiếng Việt.
+YÊU CẦU QUAN TRỌNG:
+- BẮT ĐẦU bằng đúng 1 câu chào: "Chào %s,"
+- Sau đó chỉ trả về đúng 3 mục sau theo format và KHÔNG thêm mục khác:
 
-Điểm tổng: """).append(scorePct).append("/100\n\n");
+Điểm mạnh:
+- ...
+- ...
+
+Điểm yếu:
+- ...
+- ...
+
+Gợi ý ôn tập:
+- ...
+- ...
+
+QUY TẮC:
+- Chỉ dùng gạch đầu dòng bắt đầu bằng "- " trong từng mục.
+- Không markdown, không in đậm, không đánh số.
+- Ngắn gọn nhưng rõ ràng. Không bịa kiến thức ngoài phạm vi câu hỏi.
+""".formatted(name));
+
+        sb.append("\nĐiểm tổng: ").append(scorePct).append("/100\n\n");
 
         int idx = 1;
         for (Question q : questions) {
             AnswerResult ar = map.get(q.getId());
+
             sb.append("Câu ").append(idx++).append(" (").append(q.getQuestionType()).append("): ")
-                    .append(q.getContent()).append("\n");
+                    .append(safeTrim(q.getContent(), 800)).append("\n");
 
             if (q.getQuestionType() == QuestionType.MCQ) {
-                sb.append("- Đáp án đúng: ").append(normalizeChoice(q.getCorrectAnswer())).append("\n");
-                sb.append("- Học viên chọn: ").append(ar != null ? safeStr(ar.selectedAnswer) : "").append("\n");
+                sb.append("Đúng: ").append(normalizeChoice(q.getCorrectAnswer()))
+                        .append(". Chọn: ").append(ar != null ? safeStr(ar.selectedAnswer) : "")
+                        .append(".\n");
             } else {
                 Rubric rubric = readRubric(q.getAnalysis(), q.getCorrectAnswer());
-                sb.append("- Đáp án mẫu: ").append(rubric.sampleAnswer).append("\n");
-                sb.append("- Học viên trả lời: ").append(ar != null ? safeStr(ar.textAnswer) : "").append("\n");
-                sb.append("- Keywords rubric: ")
-                        .append(String.join(", ", rubric.keywords == null ? List.of() : rubric.keywords))
-                        .append("\n");
+                sb.append("Đáp án mẫu: ").append(safeTrim(rubric.sampleAnswer, 800)).append("\n");
+                sb.append("Trả lời: ").append(ar != null ? safeTrim(ar.textAnswer, 800) : "").append("\n");
+                if (rubric.keywords != null && !rubric.keywords.isEmpty()) {
+                    sb.append("Keywords: ").append(String.join(", ", rubric.keywords)).append("\n");
+                }
             }
 
-            sb.append("- Chấm: ").append(ar != null ? ar.score : 0)
-                    .append("/")
-                    .append(ar != null ? ar.maxScore : 0)
+            sb.append("Chấm: ").append(ar != null ? ar.score : 0)
+                    .append("/").append(ar != null ? ar.maxScore : 0)
                     .append("\n\n");
         }
+
         return sb.toString();
     }
 
@@ -1339,22 +1468,42 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         Map<String, AnswerResultV2> map = results.stream()
                 .collect(Collectors.toMap(a -> a.questionKey, a -> a, (a, b) -> b));
 
-        String name = session.userFullName == null || session.userFullName.isBlank() ? "bạn" : session.userFullName;
+        String name = (session.userFullName == null || session.userFullName.isBlank())
+                ? "bạn"
+                : session.userFullName.trim();
 
         StringBuilder sb = new StringBuilder();
-        sb.append("Hãy nhận xét NGẮN GỌN cho học viên (tiếng Việt).\n");
-        sb.append("Yêu cầu định dạng: chỉ dùng gạch đầu dòng bắt đầu bằng '- '. Không in đậm, không đánh số, không markdown.\n");
-        sb.append("Chào ").append(name).append(".\n");
-        sb.append("Điểm tổng: ").append(scorePct).append("/100\n\n");
-        sb.append("Nội dung cần có:\n");
-        sb.append("- Tổng quan (2-3 ý)\n");
-        sb.append("- Lỗi sai nổi bật (tối đa 4 ý)\n");
-        sb.append("- Gợi ý ôn tập (3-5 ý)\n\n");
+        sb.append("""
+Bạn là trợ giảng. Hãy nhận xét bài làm của học viên bằng tiếng Việt.
+YÊU CẦU QUAN TRỌNG:
+- BẮT ĐẦU bằng đúng 1 câu chào: "Chào %s,"
+- Sau đó chỉ trả về đúng 3 mục sau theo format và KHÔNG thêm mục khác:
+
+Điểm mạnh:
+- ...
+- ...
+
+Điểm yếu:
+- ...
+- ...
+
+Gợi ý ôn tập:
+- ...
+- ...
+
+QUY TẮC:
+- Chỉ dùng gạch đầu dòng bắt đầu bằng "- " trong từng mục.
+- Không markdown, không in đậm, không đánh số.
+- Ngắn gọn nhưng rõ ràng. Không bịa kiến thức ngoài phạm vi câu hỏi.
+""".formatted(name));
+
+        sb.append("\nĐiểm tổng: ").append(scorePct).append("/100\n\n");
 
         int idx = 1;
         for (SessionQuestion sq : session.questions) {
             if (sq == null || sq.item == null) continue;
             AnswerResultV2 ar = map.get(sq.key);
+
             sb.append("Câu ").append(idx++).append(": ")
                     .append(safeTrim(sq.item.getQuestion(), 800))
                     .append("\n");
@@ -1380,63 +1529,78 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
     }
 
     /**
-     * Format feedback:
-     * - greeting: "Chào <tên user>"
-     * - bullet list '- '
-     * - remove markdown bold/numbered headings
+     * IMPORTANT:
+     * - KHÔNG tự thêm "Chào ..." nữa (để tránh chào 2 lần).
+     * - Nếu AI trả rỗng => fallback đúng 3 mục (có chào).
      */
     private String formatAiFeedback(String userFullName, String raw) {
         String name = (userFullName == null || userFullName.isBlank()) ? "bạn" : userFullName.trim();
-        String text = raw == null ? "" : raw;
+        String text = raw == null ? "" : raw.trim();
 
-        // strip common markdown
+        // strip code fences
+        if (text.startsWith("```")) {
+            text = text.replaceFirst("^```[a-zA-Z]*\\s*", "");
+            text = text.replaceFirst("\\s*```\\s*$", "");
+            text = text.trim();
+        }
+
+        // remove common markdown tokens
         text = text.replace("**", "")
                 .replace("__", "")
                 .replace("##", "")
                 .replace("###", "")
                 .trim();
 
-        // collect candidate lines
         List<String> lines = new ArrayList<>();
         for (String line : text.split("\\r?\\n")) {
             String l = line.trim();
             if (l.isBlank()) continue;
 
-            // remove leading numbering like "1." "2)" etc
-            l = l.replaceFirst("^[0-9]+[\\.)]\\s*", "");
-
             // normalize bullets
-            l = l.replaceFirst("^[•\\-–—]+\\s*", "");
+            if (l.startsWith("•")) l = l.replaceFirst("^•\\s*", "- ");
+            if (l.startsWith("*")) l = l.replaceFirst("^\\*\\s*", "- ");
+            if (l.startsWith("–")) l = l.replaceFirst("^–\\s*", "- ");
+            if (l.startsWith("—")) l = l.replaceFirst("^—\\s*", "- ");
+            if (l.matches("^\\-\\s*.+") && !l.startsWith("- ")) {
+                l = l.replaceFirst("^\\-\\s*", "- ");
+            }
 
-            if (l.isBlank()) continue;
             lines.add(l);
         }
 
-        // fallback if AI empty
         if (lines.isEmpty()) {
-            lines = List.of(
-                    "Bạn làm xong bài, hãy xem lại các câu sai để rút kinh nghiệm.",
-                    "Ưu tiên ôn lại phần kiến thức nền và ví dụ trong học liệu.",
-                    "Làm lại bài với thời gian giới hạn để tăng tốc độ."
-            );
+            return """
+Chào %s,
+Điểm mạnh:
+- Bạn đã hoàn thành bài và có nỗ lực trả lời.
+- Một số ý trả lời đúng hướng theo học liệu.
+Điểm yếu:
+- Còn thiếu/nhầm ở các ý trọng tâm trong một số câu.
+- Trình bày chưa đủ rõ, thiếu keywords quan trọng.
+Gợi ý ôn tập:
+- Xem lại các câu sai trong phần “Xem lại đáp án”.
+- Ôn lại khái niệm chính và ví dụ trong học liệu.
+- Làm lại bài dưới giới hạn thời gian để tăng tốc độ.
+""".formatted(name).trim();
         }
 
-        int limit = Math.max(3, DEFAULT_FEEDBACK_MAX_BULLETS);
-        if (lines.size() > limit) {
-            lines = lines.subList(0, limit);
+        String first = lines.get(0).trim();
+        boolean hasGreeting = first.toLowerCase(Locale.ROOT).startsWith("chào ");
+
+        String out = String.join("\n", lines).trim();
+        if (!hasGreeting) {
+            out = ("Chào " + name + ",\n" + out).trim();
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("Chào ").append(name).append(",\n");
-        for (String l : lines) {
-            sb.append("- ").append(l).append("\n");
+        if (out.length() > MAX_AI_FEEDBACK_CHARS) {
+            out = out.substring(0, MAX_AI_FEEDBACK_CHARS);
         }
-        return sb.toString().trim();
+        return out;
     }
 
-    // =========================
+    // =========================================================
     // Helpers
-    // =========================
+    // =========================================================
     private void validateGenerateRequest(PracticeGenerateRequest req) {
         if (req == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
         if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
@@ -1452,6 +1616,7 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         if (req == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
         if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
         if (req.getNumberOfQuestions() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
+
         int n = req.getNumberOfQuestions();
         if (n <= 0 || n > DEFAULT_MAX_QUESTIONS) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + DEFAULT_MAX_QUESTIONS);
@@ -1513,6 +1678,7 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
         List<PracticeQuestionV2Response> questions = new ArrayList<>();
         for (SessionQuestion sq : session.questions) {
             if (sq == null || sq.item == null) continue;
+
             PracticeQuestionV2Response q = new PracticeQuestionV2Response();
             q.setQuestionKey(sq.key);
             q.setQuestionType(sq.item.getQuestionType());
@@ -1578,7 +1744,7 @@ Không bịa kiến thức ngoài phạm vi câu hỏi.
     }
 
     /**
-     * ✅ Chia điểm nguyên theo số câu, đảm bảo tổng đúng tuyệt đối.
+     * Chia điểm nguyên theo số câu, đảm bảo tổng đúng tuyệt đối.
      * Ví dụ total=70, count=6 -> [12,12,12,12,11,11] (tổng=70)
      */
     private Map<Long, Integer> allocatePointsByQuestionId(List<Question> questions, int totalPoints) {

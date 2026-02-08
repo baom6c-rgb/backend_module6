@@ -5,6 +5,10 @@ import java.util.List;
 public class AttemptDetailResponse {
     private Long attemptId;
     private Long examId;
+
+    // ✅ NEW
+    private String examTitle;
+
     private Integer durationMinutes;
     private List<AttemptQuestionResponse> questions;
 
@@ -13,6 +17,9 @@ public class AttemptDetailResponse {
 
     public Long getExamId() { return examId; }
     public void setExamId(Long examId) { this.examId = examId; }
+
+    public String getExamTitle() { return examTitle; }
+    public void setExamTitle(String examTitle) { this.examTitle = examTitle; }
 
     public Integer getDurationMinutes() { return durationMinutes; }
     public void setDurationMinutes(Integer durationMinutes) { this.durationMinutes = durationMinutes; }

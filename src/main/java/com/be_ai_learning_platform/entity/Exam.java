@@ -24,9 +24,12 @@ public class Exam {
     @Enumerated(EnumType.STRING)
     private ExamType type;
 
+    // ✅ NEW: AI đặt tên bài
+    @Column(length = 120)
+    private String title;
+
     private Integer durationMinutes;
     private Integer passScore = 75;
 
     private LocalDateTime createdAt = LocalDateTime.now();
 }
-

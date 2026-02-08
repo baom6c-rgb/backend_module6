@@ -34,7 +34,6 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
     public List<UserExamAttemptDTO> getMyAttempts(Long userId) {
         log.info("=== DEBUG: Getting exam attempts for userId: {}", userId);
 
-        // Kiểm tra user có tồn tại không
         boolean userExists = userRepository.existsById(userId);
         log.info("=== DEBUG: User exists: {}", userExists);
 
@@ -43,19 +42,16 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
             return List.of();
         }
 
-        // Lấy tất cả attempts của user
         List<ExamAttempt> attempts = examAttemptRepository.findByUserIdOrderBySubmitTimeDesc(userId);
         log.info("=== DEBUG: Found {} exam attempts", attempts.size());
 
         if (attempts.isEmpty()) {
             log.warn("=== DEBUG: No exam attempts found for user: {}", userId);
 
-            // Kiểm tra có attempt nào trong database không
             long totalAttempts = examAttemptRepository.count();
             log.info("=== DEBUG: Total attempts in database: {}", totalAttempts);
 
             if (totalAttempts > 0) {
-                // Có attempts nhưng không phải của user này
                 log.warn("=== DEBUG: There are {} attempts in DB but none belong to userId: {}",
                         totalAttempts, userId);
             } else {
@@ -65,21 +61,13 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
             return List.of();
         }
 
-        // Convert sang DTO
-        List<UserExamAttemptDTO> dtos = attempts.stream()
-                .map(attempt -> {
-                    log.debug("=== DEBUG: Processing attempt id: {}", attempt.getId());
-                    return convertToDTO(attempt);
-                })
+        return attempts.stream()
+                .map(this::convertToDTO)
                 .collect(Collectors.toList());
-
-        log.info("=== DEBUG: Successfully converted {} attempts to DTOs", dtos.size());
-        return dtos;
     }
 
     @Override
     public Map<String, Object> getExamStats(Long userId) {
-        // Sử dụng hàm Native để đồng bộ dữ liệu
         List<ExamAttempt> attempts = examAttemptRepository.findByUserIdNative(userId);
 
         double avgScore = attempts.stream()
@@ -97,12 +85,11 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
         stats.put("totalTests", attempts.size());
         stats.put("averageScore", Math.round(avgScore * 10.0) / 10.0);
         stats.put("passedTests", passedCount);
-        stats.put("rank", attempts.size() > 0 ? 12 : 0); // Ví dụ hạng 12
+        stats.put("rank", attempts.size() > 0 ? 12 : 0);
 
         return stats;
     }
 
-    // Các hàm getAttemptById, startExam, submitExam giữ nguyên như bản trước...
     @Override
     public ExamAttempt getAttemptById(Long attemptId) {
         return examAttemptRepository.findById(attemptId)
@@ -114,6 +101,7 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
     public ExamAttempt startExam(Long userId, Long examId) {
         Exam exam = examRepository.findById(examId)
                 .orElseThrow(() -> new RuntimeException("Đề thi không tồn tại"));
+
         ExamAttempt attempt = new ExamAttempt();
         attempt.setUser(userRepository.getReferenceById(userId));
         attempt.setExam(exam);
@@ -127,9 +115,9 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
         ExamAttempt attempt = getAttemptById(attemptId);
         try {
             attempt.setAnswersJson(objectMapper.writeValueAsString(answers));
-            // Logic tính điểm thực tế nên được thêm ở đây
             attempt.setScore(80);
             attempt.setSubmitTime(LocalDateTime.now());
+
             if (attempt.getScore() >= attempt.getExam().getPassScore()) {
                 attempt.setStatus(ExamResult.PASSED);
             } else {
@@ -144,11 +132,9 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
     @Override
     @Transactional(readOnly = true)
     public List<UserExamAttemptDTO> getAllAttemptsForAdmin() {
-        // Sử dụng method JOIN FETCH để tối ưu hiệu năng
         List<ExamAttempt> allAttempts = examAttemptRepository.findAllWithUserDetails();
-
         return allAttempts.stream()
-                .map(this::convertToDTO) // Hàm convertToDTO bây giờ đã có studentName/Email
+                .map(this::convertToDTO)
                 .collect(Collectors.toList());
     }
 
@@ -156,12 +142,11 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
         Exam exam = attempt.getExam();
         User user = attempt.getUser();
 
-        // Lấy thông tin module và class từ ExamAttempt (không phải từ Exam)
+        // ===== module/class từ ExamAttempt =====
         String moduleName = "N/A";
         String className = "N/A";
 
         try {
-            // Module được lưu trực tiếp trong ExamAttempt
             if (attempt.getLearningModule() != null) {
                 moduleName = attempt.getLearningModule().getModuleName();
             }
@@ -170,7 +155,6 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
         }
 
         try {
-            // Class được lưu trực tiếp trong ExamAttempt
             if (attempt.getClassroom() != null) {
                 className = attempt.getClassroom().getClassName();
             }
@@ -178,47 +162,67 @@ public class ExamAttemptServiceImpl implements ExamAttemptService {
             log.warn("Cannot get class name for attempt: {}", attempt.getId(), e);
         }
 
-        // Tính thời gian làm bài (phút)
+        // ===== duration (phút) =====
         Integer duration = 0;
         if (attempt.getStartTime() != null && attempt.getSubmitTime() != null) {
-            duration = (int) ChronoUnit.MINUTES.between(
-                    attempt.getStartTime(),
-                    attempt.getSubmitTime()
-            );
+            duration = (int) ChronoUnit.MINUTES.between(attempt.getStartTime(), attempt.getSubmitTime());
         }
 
-        // Lấy số câu hỏi - Exam không có relationship với Questions
-        // Cần query riêng hoặc lưu trong exam
         Integer totalQuestions = 0;
-
-        // Tính số câu đúng từ answersJson nếu có
         Integer correctAnswers = 0;
-        // TODO: Parse answersJson và tính số câu đúng
 
-        // Tên bài thi - lấy từ ExamType hoặc tạo tên mặc định
-        String examName = "Bài thi";
-        try {
-            if (exam.getType() != null) {
-                examName = "Bài thi " + exam.getType().name();
-            }
-        } catch (Exception e) {
-            log.warn("Cannot get exam type for exam: {}", exam.getId(), e);
-        }
+        // ✅ FIX: lấy AI title từ Exam.title
+        String aiTitle = resolveExamTitle(exam);
+        String fallbackName = resolveFallbackExamName(exam);
 
-        // Build DTO
+        // name + examTitle đều ưu tiên AI title
+        String finalTitle = (aiTitle != null && !aiTitle.isBlank()) ? aiTitle : fallbackName;
+
         return UserExamAttemptDTO.builder()
                 .id(attempt.getId())
-                .studentName(user != null ? user.getFullName() : "N/A") // Lấy tên thật của user
-                .studentEmail(user != null ? user.getEmail() : "N/A")   // Lấy email
-                .name(examName)
+                .studentName(user != null ? user.getFullName() : "N/A")
+                .studentEmail(user != null ? user.getEmail() : "N/A")
+
+                // ✅ backward compatible (FE đang dùng name)
+                .name(finalTitle)
+
+                // ✅ field mới rõ nghĩa
+                .examTitle(finalTitle)
+
                 .module(moduleName)
                 .className(className)
+
+                // giữ như bạn đang trả: submitTime
                 .date(attempt.getSubmitTime())
+
                 .score(attempt.getScore())
-                .totalScore(100)
+                .totalScore(100) // giữ logic cũ của bạn
                 .duration(duration)
                 .questions(totalQuestions)
                 .correctAnswers(correctAnswers)
                 .build();
+    }
+
+    private String resolveExamTitle(Exam exam) {
+        if (exam == null) return null;
+        try {
+            String t = exam.getTitle();
+            return (t == null) ? null : t.trim();
+        } catch (Exception e) {
+            log.warn("Cannot get exam title for exam", e);
+            return null;
+        }
+    }
+
+    private String resolveFallbackExamName(Exam exam) {
+        if (exam == null) return "Bài thi";
+        try {
+            if (exam.getType() != null) {
+                return "Bài thi " + exam.getType().name();
+            }
+        } catch (Exception e) {
+            log.warn("Cannot get exam type for fallback name", e);
+        }
+        return "Bài thi";
     }
 }
