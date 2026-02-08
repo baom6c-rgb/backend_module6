@@ -1,6 +1,9 @@
+// AtRiskStudentResponse.java
 package com.be_ai_learning_platform.dto.response;
 
 import lombok.Data;
+
+import java.util.List;
 
 @Data
 public class AtRiskStudentResponse {
@@ -26,4 +29,7 @@ public class AtRiskStudentResponse {
     private String insightSummary; // 1-2 câu
     private String[] weakTopics; // 2-5 items
     private String[] recommendedNextSteps; // 3-6 items
+
+    // ✅ NEW: AI strengths (optional)
+    private List<String> strengths;
 }
