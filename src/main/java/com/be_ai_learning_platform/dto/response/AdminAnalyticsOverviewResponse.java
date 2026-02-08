@@ -23,5 +23,18 @@ public class AdminAnalyticsOverviewResponse {
      * Top học viên cần theo dõi (lọc + giới hạn top 20) để phục vụ panel cảnh báo.
      */
     private List<AtRiskStudentResponse> atRiskStudents; // top 20
+
+    /**
+     * Top 5 học viên đạt tốt nhất theo bộ lọc hiện tại.
+     * Dùng để hiển thị bảng "Top đạt".
+     */
+    private List<AtRiskStudentResponse> topPassedStudents; // top 5
+
+    /**
+     * Top 5 học viên trượt/rủi ro nhất theo bộ lọc hiện tại.
+     * Dùng để hiển thị bảng "Top trượt".
+     */
+    private List<AtRiskStudentResponse> topFailedStudents; // top 5
+
     private List<TimeSeriesPointResponse> timeSeries;   // theo ngày
 }

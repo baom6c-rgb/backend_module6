@@ -65,6 +65,10 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
 
         List<AtRiskStudentResponse> atRisk = buildAtRisk(studentAgg);
 
+        // ✅ Top 5 (đạt / trượt) để FE render 2 bảng nhỏ
+        List<AtRiskStudentResponse> topPassed = buildTopPassed(students);
+        List<AtRiskStudentResponse> topFailed = buildTopFailed(students);
+
         List<TimeSeriesPointResponse> series = new ArrayList<>();
         for (AdminAnalyticsRepository.TimeSeriesRow r : analyticsRepository.getTimeSeries(
                 req.getClassId(), req.getModuleId(), fromTs, toTs
@@ -89,6 +93,8 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
         res.setFailRate(failRate);
         res.setStudents(students);
         res.setAtRiskStudents(atRisk);
+        res.setTopPassedStudents(topPassed);
+        res.setTopFailedStudents(topFailed);
         res.setTimeSeries(series);
         return res;
     }
@@ -253,6 +259,40 @@ public class AdminAnalyticsServiceImpl implements AdminAnalyticsService {
         );
 
         return out.size() > 20 ? out.subList(0, 20) : out;
+    }
+
+    /**
+     * Top 5 học viên đạt tốt: ưu tiên passRate cao -> avgScore cao -> attempts nhiều.
+     * Dữ liệu lấy từ danh sách students (đã áp filter).
+     */
+    private List<AtRiskStudentResponse> buildTopPassed(List<AtRiskStudentResponse> students) {
+        if (students == null || students.isEmpty()) return List.of();
+
+        List<AtRiskStudentResponse> copy = new ArrayList<>(students);
+        copy.sort(Comparator
+                .comparing(AtRiskStudentResponse::getPassRate, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(AtRiskStudentResponse::getAvgScore, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(AtRiskStudentResponse::getAttemptsCount, Comparator.nullsLast(Comparator.reverseOrder()))
+        );
+
+        return copy.size() > 5 ? copy.subList(0, 5) : copy;
+    }
+
+    /**
+     * Top 5 học viên trượt/rủi ro: ưu tiên failRate cao -> avgScore thấp -> attempts nhiều.
+     * Dữ liệu lấy từ danh sách students (đã áp filter).
+     */
+    private List<AtRiskStudentResponse> buildTopFailed(List<AtRiskStudentResponse> students) {
+        if (students == null || students.isEmpty()) return List.of();
+
+        List<AtRiskStudentResponse> copy = new ArrayList<>(students);
+        copy.sort(Comparator
+                .comparing(AtRiskStudentResponse::getFailRate, Comparator.nullsLast(Comparator.reverseOrder()))
+                .thenComparing(AtRiskStudentResponse::getAvgScore, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(AtRiskStudentResponse::getAttemptsCount, Comparator.nullsLast(Comparator.reverseOrder()))
+        );
+
+        return copy.size() > 5 ? copy.subList(0, 5) : copy;
     }
 
     private String classifyLevel(double avgScore) {

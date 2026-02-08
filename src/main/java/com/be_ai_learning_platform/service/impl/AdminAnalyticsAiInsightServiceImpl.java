@@ -1,3 +1,4 @@
+// AdminAnalyticsAiInsightServiceImpl.java
 package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.ai.GeminiStructuredClient;
@@ -202,6 +203,10 @@ public class AdminAnalyticsAiInsightServiceImpl implements AdminAnalyticsAiInsig
                     "Thử mở rộng khoảng thời gian (from/to).",
                     "Thử bỏ lọc lớp/module để kiểm tra dữ liệu tổng."
             });
+            // ✅ strengths là List<String>
+            empty.setStrengths(List.of(
+                    "Chưa đủ dữ liệu để xác định điểm mạnh rõ ràng theo bộ lọc hiện tại."
+            ));
             return empty;
         }
 
@@ -248,7 +253,14 @@ public class AdminAnalyticsAiInsightServiceImpl implements AdminAnalyticsAiInsig
             student.setInsightSummary(safeStr(ai.get("insightSummary")));
             student.setWeakTopics(toStringArray(ai.get("weakTopics")));
             student.setRecommendedNextSteps(toStringArray(ai.get("recommendedNextSteps")));
+            // ✅ strengths dùng List<String> giống style list-based
+            student.setStrengths(safeList(ai.get("strengths")));
             student.setRiskLevel(normalizeRiskLevel(student.getRiskLevel()));
+
+            // strengths rỗng -> heuristic
+            if (student.getStrengths() == null || student.getStrengths().isEmpty()) {
+                student.setStrengths(buildHeuristicStrengths(student));
+            }
 
             // nếu AI trả rỗng -> heuristic
             if (student.getInsightSummary() == null || student.getInsightSummary().isBlank()) {
@@ -383,7 +395,7 @@ RULES:
             }
         }
 
-        sb.append("\nYêu cầu: ngắn gọn, tập trung vào điểm yếu và bước tiếp theo.\n");
+        sb.append("\nYêu cầu: ngắn gọn, nêu rõ điểm yếu, điểm mạnh, và bước tiếp theo.\n");
         return sb.toString();
     }
 
@@ -395,11 +407,13 @@ BẮT BUỘC 1 JSON object duy nhất, đầy đủ key.
 FORMAT:
 {
   "insightSummary": "1-2 câu (tiếng Việt)",
+  "strengths": ["điểm mạnh 1", "điểm mạnh 2"],
   "weakTopics": ["chủ đề yếu 1", "chủ đề yếu 2"],
   "recommendedNextSteps": ["bước 1", "bước 2", "bước 3"]
 }
 
 RULES:
+- strengths: 2-4 items (nếu thiếu dữ liệu thì để rỗng [])
 - weakTopics: 2-5 items
 - recommendedNextSteps: 3-6 items, actionable
 - KẾT THÚC OUTPUT bằng dấu }
@@ -481,6 +495,11 @@ RULES:
                 round(nzDouble(s.getFailRate()) * 100)
         ));
 
+        // ✅ strengths is List<String>
+        if (s.getStrengths() == null || s.getStrengths().isEmpty()) {
+            s.setStrengths(buildHeuristicStrengths(s));
+        }
+
         s.setWeakTopics(new String[]{
                 "Nắm chắc khái niệm cốt lõi và giải thích được “tại sao”.",
                 "Tránh học thuộc máy móc, cần hiểu luồng và ứng dụng thực tế.",
@@ -500,6 +519,69 @@ RULES:
             s.setRiskScore(risk.score);
             s.setRiskLevel(risk.level);
         }
+    }
+
+    // ✅ return List<String> (không đổi flow khác)
+    private List<String> buildHeuristicStrengths(AtRiskStudentResponse s) {
+        List<String> strengths = new ArrayList<>();
+
+        double avg = nzDouble(s.getAvgScore());
+        double failRate = nzDouble(s.getFailRate());
+        long attempts = nzLong(s.getAttemptsCount());
+
+        if (avg >= 75) {
+            strengths.add("Điểm trung bình cao và ổn định");
+        } else if (avg >= 60) {
+            strengths.add("Có nền tảng khá, khả năng tiếp thu tốt");
+        }
+
+        if (failRate <= 0.2 && attempts > 0) {
+            strengths.add("Tỷ lệ đạt tốt");
+        } else if (failRate <= 0.35 && attempts > 0) {
+            strengths.add("Tỷ lệ trượt không cao, có tiềm năng cải thiện nhanh");
+        }
+
+        if (attempts >= 5) {
+            strengths.add("Chăm luyện tập và có kỷ luật học tập");
+        }
+
+        // lastAttemptAt là String ISO trong DTO, chỉ parse nếu có
+        try {
+            String last = s.getLastAttemptAt();
+            if (last != null && !last.isBlank()) {
+                LocalDateTime lastTs = LocalDateTime.parse(last.trim(), ISO_DT);
+                if (lastTs.isAfter(LocalDateTime.now().minusDays(7))) {
+                    strengths.add("Duy trì nhịp học đều trong thời gian gần đây");
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        if (strengths.isEmpty()) {
+            strengths.add("Có nền tảng cơ bản, cần tăng dần độ khó để cải thiện");
+        }
+
+        // limit 4 items
+        if (strengths.size() > 4) strengths = strengths.subList(0, 4);
+
+        return strengths;
+    }
+
+    // ✅ safeList(Object) -> List<String> để parse "strengths" từ AI
+    private List<String> safeList(Object o) {
+        if (o == null) return List.of();
+        if (o instanceof List<?> list) {
+            List<String> out = new ArrayList<>();
+            for (Object x : list) {
+                if (x == null) continue;
+                String s = String.valueOf(x).trim();
+                if (!s.isEmpty()) out.add(s);
+            }
+            return out;
+        }
+        String s = String.valueOf(o).trim();
+        if (s.isEmpty()) return List.of();
+        return List.of(s);
     }
 
     // =========================
@@ -538,7 +620,8 @@ RULES:
         return new Risk(level, score, reasons);
     }
 
-    private record Risk(String level, int score, List<String> reasons) {}
+    private record Risk(String level, int score, List<String> reasons) {
+    }
 
     // =========================
     // Date parsing (fix yyyy-MM-dd)
@@ -553,18 +636,21 @@ RULES:
             try {
                 LocalDate d = LocalDate.parse(t, ISO_DATE);
                 return d.atStartOfDay();
-            } catch (DateTimeParseException ignored) {}
+            } catch (DateTimeParseException ignored) {
+            }
         }
 
         // ISO datetime
         try {
             return LocalDateTime.parse(t, ISO_DT);
-        } catch (DateTimeParseException ignored) {}
+        } catch (DateTimeParseException ignored) {
+        }
 
         // fallback
         try {
             return LocalDateTime.parse(t);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         return null;
     }
@@ -578,18 +664,21 @@ RULES:
             try {
                 LocalDate d = LocalDate.parse(t, ISO_DATE);
                 return d.atTime(23, 59, 59);
-            } catch (DateTimeParseException ignored) {}
+            } catch (DateTimeParseException ignored) {
+            }
         }
 
         // ISO datetime
         try {
             return LocalDateTime.parse(t, ISO_DT);
-        } catch (DateTimeParseException ignored) {}
+        } catch (DateTimeParseException ignored) {
+        }
 
         // fallback
         try {
             return LocalDateTime.parse(t);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         return null;
     }
@@ -648,8 +737,13 @@ RULES:
         return "LOW";
     }
 
-    private long nzLong(Long v) { return v == null ? 0L : v; }
-    private double nzDouble(Double v) { return v == null ? 0.0 : v; }
+    private long nzLong(Long v) {
+        return v == null ? 0L : v;
+    }
+
+    private double nzDouble(Double v) {
+        return v == null ? 0.0 : v;
+    }
 
     private double round(double v) {
         return Math.round(v * 10000.0) / 10000.0;
