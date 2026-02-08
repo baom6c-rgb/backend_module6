@@ -8,6 +8,11 @@ import java.time.LocalDateTime;
 @Data
 public class SubmitPracticeV2Response {
     private Long attemptId;
+
+    // ✅ NEW
+    private Long examId;
+    private String examTitle;
+
     private Integer score;
     private Integer earnedPoints;
     private Integer totalPoints;
@@ -19,6 +24,7 @@ public class SubmitPracticeV2Response {
     private Integer retestCooldownMinutes;
     private LocalDateTime retestAvailableAt;
     private Long retestRemainingSeconds;
+
     private Boolean timedOut;
     private String feedback;
     private String aiFeedback;
