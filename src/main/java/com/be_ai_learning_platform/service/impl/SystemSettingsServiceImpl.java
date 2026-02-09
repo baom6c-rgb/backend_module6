@@ -1,6 +1,8 @@
 package com.be_ai_learning_platform.service.impl;
 
+import com.be_ai_learning_platform.dto.request.UpdateAiSettingsRequest;
 import com.be_ai_learning_platform.dto.request.UpdateSystemSettingsRequest;
+import com.be_ai_learning_platform.dto.response.AiSettingsResponse;
 import com.be_ai_learning_platform.dto.response.SystemSettingsResponse;
 import com.be_ai_learning_platform.entity.SystemSettings;
 import com.be_ai_learning_platform.repository.SystemSettingsRepository;
@@ -60,6 +62,26 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Value("${app.settings.default.monthlyReport.timeZone:Asia/Bangkok}")
     private String defaultMonthlyReportTimeZone;
 
+    // ===== AI DEFAULTS (chỉ dùng để INIT lần đầu) =====
+    @Value("${app.settings.default.ai.provider:GEMINI}")
+    private String defaultAiProvider;
+
+    @Value("${app.settings.default.ai.model:gemini-1.5-pro}")
+    private String defaultAiModel;
+
+    @Value("${app.settings.default.ai.temperature:0.0}")
+    private double defaultAiTemperature;
+
+    @Value("${app.settings.default.ai.enabled:true}")
+    private boolean defaultAiEnabled;
+
+    /**
+     * Có thể set từ ENV để init lần đầu (không bắt buộc).
+     * Sau đó admin có thể đổi trong DB mà không cần restart.
+     */
+    @Value("${app.settings.default.ai.apiKey:}")
+    private String defaultAiApiKey;
+
     @PostConstruct
     public void initIfMissing() {
         if (repo.existsById(SETTINGS_ID)) return;
@@ -67,6 +89,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         SystemSettings s = new SystemSettings();
         s.setId(SETTINGS_ID);
 
+        // ===== base =====
         s.setPassScore(defaultPassScore);
         s.setMinutesPerQuestion(defaultMinutesPerQuestion);
         s.setRetestCooldownMinutes(defaultRetestCooldownMinutes);
@@ -76,12 +99,11 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         // ===== monthly report defaults =====
         s.setMonthlyReportEnabled(defaultMonthlyReportEnabled);
 
-        // clamp 0..31 (0 = last day)
         int dom = Math.max(0, Math.min(31, defaultMonthlyReportDayOfMonth));
         s.setMonthlyReportDayOfMonth(dom);
 
         try {
-            s.setMonthlyReportTime(LocalTime.parse(defaultMonthlyReportTime)); // HH:mm
+            s.setMonthlyReportTime(LocalTime.parse(defaultMonthlyReportTime));
         } catch (Exception ex) {
             s.setMonthlyReportTime(LocalTime.of(23, 59));
         }
@@ -98,6 +120,13 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
 
         s.setMonthlyReportLastSentYearMonth(null);
 
+        // ===== AI defaults =====
+        s.setAiProvider(normalizeProvider(defaultAiProvider));
+        s.setAiModel(normalizeModel(defaultAiModel));
+        s.setAiTemperature(clamp01(defaultAiTemperature));
+        s.setAiEnabled(defaultAiEnabled);
+        s.setAiApiKey(normalizeOptionalSecret(defaultAiApiKey));
+
         s.setUpdatedAt(LocalDateTime.now());
         repo.save(s);
     }
@@ -109,7 +138,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
                 .orElseThrow(() -> new IllegalStateException("SystemSettings not initialized"));
     }
 
-    // ===================== API for other services =====================
+    // ===================== for other services =====================
 
     @Override
     @Transactional(readOnly = true)
@@ -148,7 +177,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
                 .toArray(String[]::new);
     }
 
-    // ===================== Admin API (Controller) =====================
+    // ===================== Admin API (base settings) =====================
 
     @Override
     @Transactional(readOnly = true)
@@ -180,7 +209,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         LocalTime monthlyTime = null;
         if (req.getMonthlyReportTime() != null && !req.getMonthlyReportTime().isBlank()) {
             try {
-                monthlyTime = LocalTime.parse(req.getMonthlyReportTime()); // HH:mm
+                monthlyTime = LocalTime.parse(req.getMonthlyReportTime());
             } catch (Exception ex) {
                 throw new IllegalArgumentException("monthlyReportTime must be in HH:mm format");
             }
@@ -228,6 +257,97 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return toResponse(s);
     }
 
+    // ===================== AI Settings (Admin tab: Model AI) =====================
+
+    @Override
+    @Transactional(readOnly = true)
+    public AiSettingsResponse getAi() {
+        return toAiResponse(getSettings());
+    }
+
+    @Override
+    public AiSettingsResponse updateAi(UpdateAiSettingsRequest req) {
+        if (req == null) throw new IllegalArgumentException("Request is null");
+
+        String provider = normalizeProvider(req.aiProvider());
+        String model = normalizeModel(req.aiModel());
+        Double temp = req.aiTemperature();
+        Boolean enabled = req.aiEnabled();
+
+        // currently only GEMINI is implemented
+        if (!"GEMINI".equals(provider)) {
+            throw new IllegalArgumentException("aiProvider not supported: " + provider);
+        }
+        if (temp == null) {
+            throw new IllegalArgumentException("aiTemperature is required");
+        }
+        if (temp < 0 || temp > 1) {
+            throw new IllegalArgumentException("aiTemperature must be 0..1");
+        }
+        if (enabled == null) {
+            throw new IllegalArgumentException("aiEnabled is required");
+        }
+
+        SystemSettings s = getSettings();
+
+        s.setAiProvider(provider);
+        s.setAiModel(model);
+        s.setAiTemperature(clamp01(temp));
+        s.setAiEnabled(Boolean.TRUE.equals(enabled));
+
+        // ✅ only update key if admin enters a new key
+        String newKey = normalizeOptionalSecret(req.aiApiKey());
+        if (newKey != null) {
+            s.setAiApiKey(newKey);
+        }
+
+        s.setUpdatedAt(LocalDateTime.now());
+        repo.save(s);
+
+        return toAiResponse(s);
+    }
+
+    // ===================== For AI clients =====================
+
+    @Override
+    @Transactional(readOnly = true)
+    public String requireAiApiKey() {
+        SystemSettings s = getSettings();
+        if (!Boolean.TRUE.equals(s.getAiEnabled())) {
+            throw new IllegalStateException("AI is disabled by system settings");
+        }
+        String key = safeTrim(s.getAiApiKey());
+        if (key == null || key.isBlank()) {
+            throw new IllegalStateException("AI apiKey is missing (Admin > Settings > Model AI)");
+        }
+        return key;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String getAiProvider() {
+        return normalizeProvider(getSettings().getAiProvider());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String getAiModel() {
+        return normalizeModel(getSettings().getAiModel());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public double getAiTemperature() {
+        Double t = getSettings().getAiTemperature();
+        return clamp01(t == null ? 0.0 : t);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isAiEnabled() {
+        return Boolean.TRUE.equals(getSettings().getAiEnabled());
+    }
+
     // ===================== Mapping =====================
 
     private SystemSettingsResponse toResponse(SystemSettings s) {
@@ -243,10 +363,22 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         r.setMonthlyReportTime(s.getMonthlyReportTime() == null ? "23:59" : s.getMonthlyReportTime().toString());
         r.setMonthlyReportTimeZone(s.getMonthlyReportTimeZone());
         r.setMonthlyReportLastSentYearMonth(s.getMonthlyReportLastSentYearMonth());
-
         r.setUpdatedAt(s.getUpdatedAt());
         return r;
     }
+
+    private AiSettingsResponse toAiResponse(SystemSettings s) {
+        AiSettingsResponse r = new AiSettingsResponse();
+        r.setAiProvider(normalizeProvider(s.getAiProvider()));
+        r.setAiApiKeyMasked(maskKey(s.getAiApiKey()));
+        r.setAiModel(normalizeModel(s.getAiModel()));
+        r.setAiTemperature(clamp01(s.getAiTemperature() == null ? 0.0 : s.getAiTemperature()));
+        r.setAiEnabled(Boolean.TRUE.equals(s.getAiEnabled()));
+        r.setUpdatedAt(s.getUpdatedAt());
+        return r;
+    }
+
+    // ===================== Helpers =====================
 
     private String normalizeEmails(String raw) {
         if (raw == null) return "";
@@ -254,5 +386,46 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
                 .map(String::trim)
                 .filter(e -> !e.isBlank())
                 .collect(Collectors.joining(","));
+    }
+
+    private String safeTrim(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isBlank() ? null : t;
+    }
+
+    private String normalizeProvider(String raw) {
+        String p = safeTrim(raw);
+        if (p == null) return "GEMINI";
+        return p.toUpperCase();
+    }
+
+    private String normalizeModel(String raw) {
+        String m = safeTrim(raw);
+        if (m == null) return "gemini-1.5-pro";
+        return m;
+    }
+
+    /**
+     * If blank => return null (meaning "no update" in updateAi).
+     */
+    private String normalizeOptionalSecret(String raw) {
+        String t = safeTrim(raw);
+        return (t == null) ? null : t;
+    }
+
+    private String maskKey(String key) {
+        String k = safeTrim(key);
+        if (k == null) return null;
+        if (k.length() < 8) return "****";
+        String head = k.substring(0, 3);
+        String tail = k.substring(k.length() - 3);
+        return head + "****" + tail;
+    }
+
+    private double clamp01(double v) {
+        if (v < 0) return 0;
+        if (v > 1) return 1;
+        return v;
     }
 }

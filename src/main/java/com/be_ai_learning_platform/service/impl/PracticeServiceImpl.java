@@ -87,6 +87,21 @@ public class PracticeServiceImpl implements PracticeService {
 
     private final SystemSettingsService settingsService;
 
+    private void ensureAiAvailable() {
+        // tuỳ settingsService của mày đang dùng field nào:
+        // - isAiEnabled()
+        // - getAiEnabled()
+        // - getEmailNotificationsEnabled() ...
+        // tao giả định đúng tên là isAiEnabled()
+        if (!settingsService.isAiEnabled()) {
+            throw new ResponseStatusException(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    "AI hiện tại không thể sử dụng"
+            );
+        }
+    }
+
+
     public PracticeServiceImpl(
             UserRepository userRepo,
             LearningMaterialRepository materialRepo,
@@ -119,7 +134,7 @@ public class PracticeServiceImpl implements PracticeService {
     @Override
     public GenerateQuestionsResponse generatePreview(String email, PracticeGenerateRequest req) {
         validateGenerateRequest(req);
-
+        ensureAiAvailable();
         User me = getMe(email);
 
         LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
@@ -564,7 +579,7 @@ Gợi ý ôn tập:
     @Override
     public GeneratePracticeSessionResponse generateSessionV2(String email, GeneratePracticeSessionRequest req) {
         validateGenerateV2Request(req);
-
+        ensureAiAvailable();
         User me = getMe(email);
 
         LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
@@ -927,6 +942,7 @@ Gợi ý ôn tập:
 
         String focusText = buildWeakAreasText(attempt, examQuestions);
 
+        ensureAiAvailable();
         GenerateQuestionsResponse generated =
                 questionGenerationService.generateRetest(email, materialId, numberOfQuestions, focusText);
 

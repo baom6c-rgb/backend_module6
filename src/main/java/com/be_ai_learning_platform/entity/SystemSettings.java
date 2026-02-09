@@ -64,5 +64,32 @@ public class SystemSettings {
      */
     private String monthlyReportLastSentYearMonth;
 
+    // ===== AI Model / Provider settings =====
+    /**
+     * Example: GEMINI (future: OPENAI, CLAUDE ...)
+     */
+    @Column(nullable = false)
+    private String aiProvider = "GEMINI";
+
+    /**
+     * Secret key used for AI provider. Do NOT expose this value via API.
+     */
+    @Column(length = 512)
+    private String aiApiKey;
+
+    /**
+     * Example: gemini-1.5-pro
+     */
+    @Column(length = 80)
+    private String aiModel;
+
+    /**
+     * 0..1
+     */
+    private Double aiTemperature;
+
+    @Column(nullable = false)
+    private Boolean aiEnabled = true;
+
     private LocalDateTime updatedAt;
 }
