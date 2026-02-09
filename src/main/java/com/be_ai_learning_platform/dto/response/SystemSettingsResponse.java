@@ -22,7 +22,7 @@ public class SystemSettingsResponse {
     private Integer monthlyReportDayOfMonth;
     /** HH:mm */
     private String monthlyReportTime;
-    /** IANA zone id, e.g. Asia/Bangkok */
+    /** IANA zone id, e.g. Asia/Ho_Chi_Minh */
     private String monthlyReportTimeZone;
     /** YYYY-MM đã gửi gần nhất */
     private String monthlyReportLastSentYearMonth;
