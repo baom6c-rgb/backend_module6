@@ -66,7 +66,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Value("${app.settings.default.ai.provider:GEMINI}")
     private String defaultAiProvider;
 
-    @Value("${app.settings.default.ai.model:gemini-1.5-pro}")
+    @Value("${app.settings.default.ai.model:gemini-2.5-flash}")
     private String defaultAiModel;
 
     @Value("${app.settings.default.ai.temperature:0.0}")
