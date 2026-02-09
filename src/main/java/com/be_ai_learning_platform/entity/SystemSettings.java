@@ -54,10 +54,10 @@ public class SystemSettings {
     private LocalTime monthlyReportTime = LocalTime.of(23, 59);
 
     /**
-     * IANA timezone, e.g. Asia/Bangkok
+     * IANA timezone, e.g. Asia/Ho_Chi_Minh
      */
     @Column(nullable = false)
-    private String monthlyReportTimeZone = "Asia/Bangkok";
+    private String monthlyReportTimeZone = "Asia/Ho_Chi_Minh";
 
     /**
      * YYYY-MM đã gửi gần nhất (để chống gửi trùng)
