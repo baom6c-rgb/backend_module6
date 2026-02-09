@@ -1,5 +1,6 @@
 package com.be_ai_learning_platform.ai;
 
+import com.be_ai_learning_platform.service.SystemSettingsService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -14,22 +15,39 @@ public class GeminiResponsesClient {
 
     private final RestClient restClient;
     private final GeminiProperties props;
+    private final SystemSettingsService settingsService;
 
-    public GeminiResponsesClient(RestClient geminiRestClient, GeminiProperties props) {
+    public GeminiResponsesClient(RestClient geminiRestClient,
+                                 GeminiProperties props,
+                                 SystemSettingsService settingsService) {
         this.restClient = geminiRestClient;
         this.props = props;
+        this.settingsService = settingsService;
     }
 
-    /**
-     * Generate plain text using Gemini generateContent.
-     * Keeps a simple signature to match old OpenAI usage in services.
-     */
     public String generateText(String prompt) {
         if (prompt == null || prompt.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Prompt is empty");
         }
-        if (props == null || props.model() == null || props.model().isBlank()) {
-            throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Gemini model is not configured");
+
+        String provider = settingsService.getAiProvider();
+        if (!"GEMINI".equalsIgnoreCase(provider)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "AI provider is not GEMINI");
+        }
+
+        String model = settingsService.getAiModel();
+        if (model == null || model.isBlank()) {
+            model = (props == null ? null : props.model());
+        }
+        if (model == null || model.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Gemini model is not configured");
+        }
+
+        final String apiKey;
+        try {
+            apiKey = settingsService.requireAiApiKey();
+        } catch (IllegalStateException ex) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), ex);
         }
 
         Map<String, Object> body = Map.of(
@@ -44,7 +62,8 @@ public class GeminiResponsesClient {
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> res = restClient.post()
-                    .uri("/v1/models/{model}:generateContent", props.model())
+                    // ✅ key via query param (recommended + stable)
+                    .uri("/v1beta/models/{model}:generateContent?key={key}", model, apiKey)
                     .body(body)
                     .retrieve()
                     .body(Map.class);
@@ -53,12 +72,10 @@ public class GeminiResponsesClient {
             return text == null ? "" : text.trim();
 
         } catch (RestClientResponseException e) {
-            // Gemini trả lỗi HTTP (401/403/429/5xx...)
             String msg = buildHttpErrorMessage(e);
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, msg, e);
 
         } catch (Exception e) {
-            // Lỗi khác (parse, network, null pointer...)
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Gemini request failed", e);
         }
     }
@@ -68,8 +85,6 @@ public class GeminiResponsesClient {
         String body = e.getResponseBodyAsString();
         String briefBody = (body == null) ? "" : body.trim();
         if (briefBody.length() > 400) briefBody = briefBody.substring(0, 400) + "...";
-
-        // Message ngắn gọn nhưng đủ debug
         return "Gemini API error " + status + (briefBody.isBlank() ? "" : (": " + briefBody));
     }
 }

@@ -11,13 +11,11 @@ public class GeminiConfig {
 
     @Bean
     public RestClient geminiRestClient(GeminiProperties props) {
-        // props đã @Validated, nhưng check nhẹ cũng ok
         return RestClient.builder()
                 .baseUrl(props.baseUrl())
                 .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
                 .defaultHeader(HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)
-                // ✅ Gemini uses x-goog-api-key
-                .defaultHeader("x-goog-api-key", props.apiKey())
+                // ✅ DO NOT set API KEY here anymore
                 .build();
     }
 }
