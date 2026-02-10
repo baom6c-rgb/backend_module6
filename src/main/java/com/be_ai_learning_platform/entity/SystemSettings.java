@@ -37,6 +37,13 @@ public class SystemSettings {
     @Column(columnDefinition = "TEXT")
     private String adminEmails;
 
+    // ===== Practice question distribution (NEW) =====
+    @Column(nullable = false)
+    private Integer mcqQuestionCount;
+
+    @Column(nullable = false)
+    private Integer essayQuestionCount;
+
     // ===== Monthly Admin Report =====
     @Column(nullable = false)
     private Boolean monthlyReportEnabled = false;

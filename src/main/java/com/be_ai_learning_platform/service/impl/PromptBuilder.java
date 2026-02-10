@@ -24,11 +24,16 @@ public class PromptBuilder {
     private static final int ESSAY_QUESTION_MAX = 260;
     private static final int ESSAY_SAMPLE_MAX = 480;
 
-    public String buildPrompt(String materialText, int numberOfQuestions) {
+    /**
+     * ✅ Count được truyền từ SystemSettings (admin set).
+     * totalQuestions = mcqCount + essayCount (validate ở service rồi).
+     */
+    public String buildPrompt(String materialText, int mcqCount, int essayCount) {
         String material = normalizeAndTrim(materialText, MAX_MATERIAL_CHARS);
 
-        int essayCount = Math.max(1, (int) Math.round(numberOfQuestions * ESSAY_RATIO));
-        int mcqCount = Math.max(0, numberOfQuestions - essayCount);
+        int mcq = Math.max(0, mcqCount);
+        int essay = Math.max(0, essayCount);
+        int totalQuestions = mcq + essay;
 
         return """
 Bạn là hệ thống tạo đề luyện tập cho HỌC VIÊN dựa DUY NHẤT vào tài liệu bên dưới.
@@ -99,9 +104,9 @@ TÀI LIỆU:
 %s
 \"\"\"
 """.formatted(
-                numberOfQuestions,
-                mcqCount,
-                essayCount,
+                totalQuestions,
+                mcq,
+                essay,
                 MCQ_QUESTION_MAX,
                 MCQ_OPTION_MAX,
                 MCQ_ANALYSIS_MAX,
@@ -111,12 +116,17 @@ TÀI LIỆU:
         );
     }
 
-    public String buildRetestPrompt(String materialText, int numberOfQuestions, String focusText) {
+    /**
+     * ✅ Retest: count cũng lấy từ settings, focusText vẫn giữ nguyên prompt.
+     * Signature khớp với service của mày: buildRetestPrompt(trimmed, mcq, essay, focusText)
+     */
+    public String buildRetestPrompt(String materialText, int mcqCount, int essayCount, String focusText) {
         String material = normalizeAndTrim(materialText, MAX_MATERIAL_CHARS);
         String focus = normalizeAndTrim(focusText, MAX_FOCUS_CHARS);
 
-        int essayCount = Math.max(1, (int) Math.round(numberOfQuestions * ESSAY_RATIO));
-        int mcqCount = Math.max(0, numberOfQuestions - essayCount);
+        int mcq = Math.max(0, mcqCount);
+        int essay = Math.max(0, essayCount);
+        int totalQuestions = mcq + essay;
 
         return """
 Bạn là hệ thống tạo đề THI LẠI (RETEST) cho HỌC VIÊN, dựa DUY NHẤT vào tài liệu bên dưới.
@@ -170,9 +180,9 @@ TÀI LIỆU:
 %s
 \"\"\"
 """.formatted(
-                numberOfQuestions,
-                mcqCount,
-                essayCount,
+                totalQuestions,
+                mcq,
+                essay,
                 focus,
                 MCQ_QUESTION_MAX,
                 MCQ_OPTION_MAX,

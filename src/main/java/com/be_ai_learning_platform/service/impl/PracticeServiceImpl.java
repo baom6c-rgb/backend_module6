@@ -88,11 +88,6 @@ public class PracticeServiceImpl implements PracticeService {
     private final SystemSettingsService settingsService;
 
     private void ensureAiAvailable() {
-        // tuỳ settingsService của mày đang dùng field nào:
-        // - isAiEnabled()
-        // - getAiEnabled()
-        // - getEmailNotificationsEnabled() ...
-        // tao giả định đúng tên là isAiEnabled()
         if (!settingsService.isAiEnabled()) {
             throw new ResponseStatusException(
                     HttpStatus.SERVICE_UNAVAILABLE,
@@ -100,7 +95,6 @@ public class PracticeServiceImpl implements PracticeService {
             );
         }
     }
-
 
     public PracticeServiceImpl(
             UserRepository userRepo,
@@ -135,6 +129,8 @@ public class PracticeServiceImpl implements PracticeService {
     public GenerateQuestionsResponse generatePreview(String email, PracticeGenerateRequest req) {
         validateGenerateRequest(req);
         ensureAiAvailable();
+        ensureValidConfiguredCounts();
+
         User me = getMe(email);
 
         LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
@@ -151,11 +147,13 @@ public class PracticeServiceImpl implements PracticeService {
             if (cached != null) return cached;
         }
 
-        // Generate mới
-        GenerateQuestionsResponse generated =
-                questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
+        int totalQuestions = getConfiguredTotalQuestions();
 
-        validateGeneratedResponse(generated, req.getNumberOfQuestions());
+        // Generate mới (BE ignore req.getNumberOfQuestions, dùng settings)
+        GenerateQuestionsResponse generated =
+                questionGenerationService.generate(email, req.getMaterialId(), totalQuestions);
+
+        validateGeneratedResponse(generated, totalQuestions);
 
         // Server tự tạo token cho preview (source of truth)
         String token = UUID.randomUUID().toString();
@@ -174,6 +172,7 @@ public class PracticeServiceImpl implements PracticeService {
     @Transactional
     public StartPracticeResponse start(String email, PracticeGenerateRequest req) {
         validateGenerateRequest(req);
+        ensureValidConfiguredCounts();
 
         User me = getMe(email);
 
@@ -196,7 +195,8 @@ public class PracticeServiceImpl implements PracticeService {
             throw new ResponseStatusException(HttpStatus.GONE, "Preview expired. Please generate preview again.");
         }
 
-        validateGeneratedResponse(generated, req.getNumberOfQuestions());
+        int totalQuestions = getConfiguredTotalQuestions();
+        validateGeneratedResponse(generated, totalQuestions);
 
         // dùng xong xoá cache để tránh reuse
         practiceSessionCache.invalidate(previewKey(email, token));
@@ -207,14 +207,14 @@ public class PracticeServiceImpl implements PracticeService {
 
         int duration = (req.getDurationMinutes() != null)
                 ? req.getDurationMinutes()
-                : computeDurationMinutes(req.getNumberOfQuestions());
+                : computeDurationMinutes(totalQuestions);
         exam.setDurationMinutes(duration);
 
         exam.setPassScore(settingsService.getPassScore());
         exam.setCreatedAt(LocalDateTime.now());
 
         // ✅ AI đặt tên bài test theo học liệu (fallback nếu AI lỗi)
-        exam.setTitle(generateExamTitle(me, material, req.getNumberOfQuestions()));
+        exam.setTitle(generateExamTitle(me, material, totalQuestions));
 
         exam = examRepo.save(exam);
 
@@ -580,6 +580,8 @@ Gợi ý ôn tập:
     public GeneratePracticeSessionResponse generateSessionV2(String email, GeneratePracticeSessionRequest req) {
         validateGenerateV2Request(req);
         ensureAiAvailable();
+        ensureValidConfiguredCounts();
+
         User me = getMe(email);
 
         LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
@@ -589,21 +591,23 @@ Gợi ý ôn tập:
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
         }
 
-        // AI generate 1 lần
-        GenerateQuestionsResponse generated =
-                questionGenerationService.generate(email, req.getMaterialId(), req.getNumberOfQuestions());
+        int totalQuestions = getConfiguredTotalQuestions();
 
-        validateGeneratedResponse(generated, req.getNumberOfQuestions());
+        // AI generate 1 lần (BE ignore req.getNumberOfQuestions)
+        GenerateQuestionsResponse generated =
+                questionGenerationService.generate(email, req.getMaterialId(), totalQuestions);
+
+        validateGeneratedResponse(generated, totalQuestions);
 
         String token = UUID.randomUUID().toString();
-        int duration = computeDurationMinutes(req.getNumberOfQuestions());
+        int duration = computeDurationMinutes(totalQuestions);
 
         PracticeSessionData session = new PracticeSessionData();
         session.sessionToken = token;
         session.userId = me.getId();
         session.userFullName = safeTrim(me.getFullName(), 120);
         session.materialId = req.getMaterialId();
-        session.numberOfQuestions = req.getNumberOfQuestions();
+        session.numberOfQuestions = totalQuestions;
         session.durationMinutes = duration;
 
         // gắn key ổn định cho từng câu (dùng để submit vì DB chưa có questionId)
@@ -621,7 +625,7 @@ Gợi ý ôn tập:
         GeneratePracticeSessionResponse res = new GeneratePracticeSessionResponse();
         res.setSessionToken(token);
         res.setMaterialId(req.getMaterialId());
-        res.setNumberOfQuestions(req.getNumberOfQuestions());
+        res.setNumberOfQuestions(totalQuestions);
         res.setDurationMinutes(duration);
         return res;
     }
@@ -933,8 +937,6 @@ Gợi ý ôn tập:
             throw new ResponseStatusException(HttpStatus.CONFLICT, "No questions found for this attempt");
         }
 
-        int numberOfQuestions = examQuestions.size();
-
         Long materialId = getMaterialIdFromExamQuestions(examQuestions);
         if (materialId == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Cannot resolve materialId from attempt");
@@ -943,21 +945,25 @@ Gợi ý ôn tập:
         String focusText = buildWeakAreasText(attempt, examQuestions);
 
         ensureAiAvailable();
-        GenerateQuestionsResponse generated =
-                questionGenerationService.generateRetest(email, materialId, numberOfQuestions, focusText);
+        ensureValidConfiguredCounts();
 
-        validateGeneratedResponse(generated, numberOfQuestions);
+        int totalQuestions = getConfiguredTotalQuestions();
+
+        GenerateQuestionsResponse generated =
+                questionGenerationService.generateRetest(email, materialId, totalQuestions, focusText);
+
+        validateGeneratedResponse(generated, totalQuestions);
 
         // create & start new session immediately
         String token = UUID.randomUUID().toString();
-        int duration = computeDurationMinutes(numberOfQuestions);
+        int duration = computeDurationMinutes(totalQuestions);
 
         PracticeSessionData session = new PracticeSessionData();
         session.sessionToken = token;
         session.userId = me.getId();
         session.userFullName = safeTrim(me.getFullName(), 120);
         session.materialId = materialId;
-        session.numberOfQuestions = numberOfQuestions;
+        session.numberOfQuestions = totalQuestions;
         session.durationMinutes = duration;
 
         List<SessionQuestion> qs = new ArrayList<>();
@@ -1221,7 +1227,6 @@ Thông tin:
 
         return "Material #" + material.getId();
     }
-
 
     private String resolveMaterialHint(LearningMaterial material) {
         if (material == null) return "";
@@ -1491,26 +1496,10 @@ QUY TẮC:
         StringBuilder sb = new StringBuilder();
         sb.append("""
 Bạn là trợ giảng. Hãy nhận xét bài làm của học viên bằng tiếng Việt.
-YÊU CẦU QUAN TRỌNG:
+Yêu cầu:
 - BẮT ĐẦU bằng đúng 1 câu chào: "Chào %s,"
-- Sau đó chỉ trả về đúng 3 mục sau theo format và KHÔNG thêm mục khác:
-
-Điểm mạnh:
-- ...
-- ...
-
-Điểm yếu:
-- ...
-- ...
-
-Gợi ý ôn tập:
-- ...
-- ...
-
-QUY TẮC:
-- Chỉ dùng gạch đầu dòng bắt đầu bằng "- " trong từng mục.
-- Không markdown, không in đậm, không đánh số.
-- Ngắn gọn nhưng rõ ràng. Không bịa kiến thức ngoài phạm vi câu hỏi.
+- Sau đó chỉ trả về đúng 3 mục: Điểm mạnh / Điểm yếu / Gợi ý ôn tập
+- Mỗi mục dùng bullet "- "
 """.formatted(name));
 
         sb.append("\nĐiểm tổng: ").append(scorePct).append("/100\n\n");
@@ -1544,23 +1533,16 @@ QUY TẮC:
         return sb.toString();
     }
 
-    /**
-     * IMPORTANT:
-     * - KHÔNG tự thêm "Chào ..." nữa (để tránh chào 2 lần).
-     * - Nếu AI trả rỗng => fallback đúng 3 mục (có chào).
-     */
     private String formatAiFeedback(String userFullName, String raw) {
         String name = (userFullName == null || userFullName.isBlank()) ? "bạn" : userFullName.trim();
         String text = raw == null ? "" : raw.trim();
 
-        // strip code fences
         if (text.startsWith("```")) {
             text = text.replaceFirst("^```[a-zA-Z]*\\s*", "");
             text = text.replaceFirst("\\s*```\\s*$", "");
             text = text.trim();
         }
 
-        // remove common markdown tokens
         text = text.replace("**", "")
                 .replace("__", "")
                 .replace("##", "")
@@ -1572,7 +1554,6 @@ QUY TẮC:
             String l = line.trim();
             if (l.isBlank()) continue;
 
-            // normalize bullets
             if (l.startsWith("•")) l = l.replaceFirst("^•\\s*", "- ");
             if (l.startsWith("*")) l = l.replaceFirst("^\\*\\s*", "- ");
             if (l.startsWith("–")) l = l.replaceFirst("^–\\s*", "- ");
@@ -1620,22 +1601,19 @@ Gợi ý ôn tập:
     private void validateGenerateRequest(PracticeGenerateRequest req) {
         if (req == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
         if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
-        if (req.getNumberOfQuestions() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
 
-        int n = req.getNumberOfQuestions();
-        if (n <= 0 || n > DEFAULT_MAX_QUESTIONS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + DEFAULT_MAX_QUESTIONS);
+        // Backward-compatible: FE vẫn gửi numberOfQuestions, nhưng BE ignore (không validate range nữa)
+        if (req.getNumberOfQuestions() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
         }
     }
 
     private void validateGenerateV2Request(GeneratePracticeSessionRequest req) {
         if (req == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
         if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
-        if (req.getNumberOfQuestions() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
 
-        int n = req.getNumberOfQuestions();
-        if (n <= 0 || n > DEFAULT_MAX_QUESTIONS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + DEFAULT_MAX_QUESTIONS);
+        if (req.getNumberOfQuestions() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
         }
     }
 
@@ -1759,10 +1737,6 @@ Gợi ý ôn tập:
         }
     }
 
-    /**
-     * Chia điểm nguyên theo số câu, đảm bảo tổng đúng tuyệt đối.
-     * Ví dụ total=70, count=6 -> [12,12,12,12,11,11] (tổng=70)
-     */
     private Map<Long, Integer> allocatePointsByQuestionId(List<Question> questions, int totalPoints) {
         Map<Long, Integer> map = new HashMap<>();
         if (questions == null || questions.isEmpty() || totalPoints <= 0) return map;
@@ -1778,9 +1752,6 @@ Gợi ý ôn tập:
         return map;
     }
 
-    /**
-     * V2: chia điểm theo key (DB chưa có questionId ở thời điểm làm bài).
-     */
     private Map<String, Integer> allocatePointsByKey(List<SessionQuestion> questions, int totalPoints) {
         Map<String, Integer> map = new HashMap<>();
         if (questions == null || questions.isEmpty() || totalPoints <= 0) return map;
@@ -1797,5 +1768,29 @@ Gợi ý ôn tập:
             }
         }
         return map;
+    }
+
+    // =========================================================
+    // NEW: Read configured distribution from SystemSettings
+    // =========================================================
+    private int getConfiguredTotalQuestions() {
+        int mcq = Math.max(0, settingsService.getMcqQuestionCount());
+        int essay = Math.max(0, settingsService.getEssayQuestionCount());
+        int total = mcq + essay;
+
+        if (total <= 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "System settings invalid: totalQuestions must be > 0");
+        }
+        return total;
+    }
+
+    private void ensureValidConfiguredCounts() {
+        int total = getConfiguredTotalQuestions();
+        if (total > DEFAULT_MAX_QUESTIONS) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "System settings invalid: totalQuestions must be <= " + DEFAULT_MAX_QUESTIONS
+            );
+        }
     }
 }

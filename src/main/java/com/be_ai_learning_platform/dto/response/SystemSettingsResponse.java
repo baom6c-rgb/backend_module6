@@ -16,6 +16,10 @@ public class SystemSettingsResponse {
     private Boolean emailNotificationsEnabled;
     private String adminEmails;
 
+    // ===== Practice question distribution (NEW) =====
+    private Integer mcqQuestionCount;
+    private Integer essayQuestionCount;
+
     // ===== Monthly Admin Report =====
     private Boolean monthlyReportEnabled;
     /** 1..31, 0 = last day */

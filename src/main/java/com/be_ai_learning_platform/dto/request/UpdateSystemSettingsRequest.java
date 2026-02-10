@@ -30,6 +30,17 @@ public class UpdateSystemSettingsRequest {
     @NotNull
     private String adminEmails; // CSV: a@x.com,b@y.com
 
+    // ===== Practice question distribution (NEW) =====
+    @NotNull
+    @Min(0)
+    @Max(200)
+    private Integer mcqQuestionCount;
+
+    @NotNull
+    @Min(0)
+    @Max(200)
+    private Integer essayQuestionCount;
+
     // ===== Monthly Admin Report =====
     private Boolean monthlyReportEnabled;
 
