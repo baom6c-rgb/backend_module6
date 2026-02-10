@@ -17,4 +17,6 @@ public class UserDashboardStatsDTO {
     private double averageScore;
     private int rank;
     private int totalStudents;
+    private long passedLessons;  // Số bài đạt yêu cầu (điểm >= ngưỡng pass)
+    private long failedLessons;  // Số bài chưa đạt (điểm < ngưỡng pass)
 }

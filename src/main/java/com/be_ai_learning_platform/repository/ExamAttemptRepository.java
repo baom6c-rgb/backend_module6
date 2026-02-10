@@ -183,4 +183,35 @@ public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> 
         ORDER BY ea.submitTime DESC
     """)
     List<ExamAttempt> findSubmittedAttemptsInRangeWithDetails(@Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
+    // ===================== Dashboard: Passed & Failed Lessons =====================
+
+    /**
+     * Đếm số bài ĐẠT yêu cầu (score >= passScore của Exam)
+     * Chỉ đếm những bài đã có điểm (score IS NOT NULL)
+     */
+    @Query(value = """
+        SELECT COUNT(*)
+        FROM exam_attempt ea
+        JOIN exam e ON ea.exam_id = e.id
+        WHERE ea.user_id = :userId
+          AND ea.score IS NOT NULL
+          AND ea.score >= 80
+        
+        """, nativeQuery = true)
+    long countPassedLessonsByUser(@Param("userId") Long userId);
+
+    /**
+     * Đếm số bài CHƯA ĐẠT (score < passScore của Exam)
+     * Chỉ đếm những bài đã có điểm (score IS NOT NULL)
+     */
+    @Query(value = """
+        SELECT COUNT(*)
+        FROM exam_attempt ea
+        JOIN exam e ON ea.exam_id = e.id
+        WHERE ea.user_id = :userId
+          AND ea.score IS NOT NULL
+          AND ea.score < 80
+        """, nativeQuery = true)
+    long countFailedLessonsByUser(@Param("userId") Long userId);
 }

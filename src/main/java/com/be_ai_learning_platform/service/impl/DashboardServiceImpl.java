@@ -38,6 +38,17 @@ public class DashboardServiceImpl implements DashboardService {
                 rank = 0; // Trả về 0 nếu lỗi để Dashboard vẫn hiện các số khác
             }
 
+            // ========== BỔ SUNG MỚI: Lấy passedLessons và failedLessons ==========
+            long passedLessons = 0;
+            long failedLessons = 0;
+            try {
+                passedLessons = examAttemptRepository.countPassedLessonsByUser(userId);
+                failedLessons = examAttemptRepository.countFailedLessonsByUser(userId);
+            } catch (Exception e) {
+                System.err.println("Lỗi tính Passed/Failed: " + e.getMessage());
+                // Giữ giá trị 0 nếu lỗi
+            }
+
             return UserDashboardStatsDTO.builder()
                     .greeting(generateGreeting(user.getFullName()))
                     .suggestion(generateSuggestion(completed, avgScore))
@@ -46,6 +57,8 @@ public class DashboardServiceImpl implements DashboardService {
                     .averageScore(avgScore != null ? Math.round(avgScore * 10.0) / 10.0 : 0.0)
                     .rank(rank != null ? rank : 0)
                     .totalStudents((int) totalStudents)
+                    .passedLessons(passedLessons)    // ← THÊM MỚI
+                    .failedLessons(failedLessons)    // ← THÊM MỚI
                     .build();
         } catch (Exception e) {
             log.error("Lỗi tổng quát Dashboard: ", e);

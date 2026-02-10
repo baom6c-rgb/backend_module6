@@ -29,7 +29,7 @@ public class Exam {
     private String title;
 
     private Integer durationMinutes;
-    private Integer passScore = 75;
+    private Integer passScore = 80;
 
     private LocalDateTime createdAt = LocalDateTime.now();
 }
