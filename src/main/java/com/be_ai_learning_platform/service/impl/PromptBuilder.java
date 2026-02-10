@@ -2,18 +2,41 @@ package com.be_ai_learning_platform.service.impl;
 
 import org.springframework.stereotype.Component;
 
+/**
+ * Prompt builder for generating practice questions.
+ *
+ * Design goals:
+ * - Generate questions that test understanding and application (not memorization).
+ * - Create plausible distractors based on common misconceptions.
+ * - Provide analysis that explains why the correct option is correct AND why the others are wrong.
+ */
 @Component
 public class PromptBuilder {
 
-    // Ratio ESSAY ~ 30% (min 1)
     private static final double ESSAY_RATIO = 0.3;
 
+    private static final int MAX_MATERIAL_CHARS = 6000;
+    private static final int MAX_FOCUS_CHARS = 2500;
+
+    private static final int MCQ_QUESTION_MAX = 320;
+    private static final int MCQ_OPTION_MAX = 120;
+    private static final int MCQ_ANALYSIS_MAX = 380;
+    private static final int ESSAY_QUESTION_MAX = 260;
+    private static final int ESSAY_SAMPLE_MAX = 480;
+
     public String buildPrompt(String materialText, int numberOfQuestions) {
+        String material = normalizeAndTrim(materialText, MAX_MATERIAL_CHARS);
+
         int essayCount = Math.max(1, (int) Math.round(numberOfQuestions * ESSAY_RATIO));
         int mcqCount = Math.max(0, numberOfQuestions - essayCount);
 
         return """
 Bạn là hệ thống tạo đề luyện tập cho HỌC VIÊN dựa DUY NHẤT vào tài liệu bên dưới.
+
+MỤC TIÊU (RẤT QUAN TRỌNG):
+- Không chỉ kiểm tra trí nhớ. Ưu tiên câu hỏi giúp học viên HIỂU và VẬN DỤNG.
+- Câu hỏi nên theo kiểu MỞ RỘNG nhưng vẫn BÁM SÁT nội dung tài liệu (không dùng kiến thức ngoài).
+- Có thể chèn code/config ngắn trong câu hỏi (nếu phù hợp) để học viên tự chạy/thử và kiểm tra hiểu bài.
 
 NHIỆM VỤ:
 - Tạo CHÍNH XÁC %d câu hỏi, gồm:
@@ -21,13 +44,35 @@ NHIỆM VỤ:
   - %d câu TỰ LUẬN NGẮN (ESSAY)
 - Trộn NGẪU NHIÊN thứ tự câu hỏi (MCQ + ESSAY xen kẽ).
 
-QUY TẮC BẮT BUỘC:
-- Bám sát tài liệu, KHÔNG dùng kiến thức ngoài tài liệu.
-- Không thêm nội dung lan man ngoài JSON.
+NGUYÊN TẮC THIẾT KẾ CÂU HỎI:
+1) BÁM SÁT TÀI LIỆU: chỉ dùng thông tin có trong tài liệu.
+2) Ưu tiên dạng câu hỏi vận dụng:
+   - Tình huống thực tế, "điều gì xảy ra nếu...", "cách xử lý đúng trong trường hợp..."
+   - So sánh lựa chọn, trade-off, best practice nêu trong tài liệu
+   - Đọc code/config ngắn và suy luận kết quả/lỗi/rủi ro
+3) Tránh câu hỏi thuần ghi nhớ (định nghĩa đơn thuần) trừ khi thật sự cần.
+
+PHƯƠNG ÁN NHIỄU (DISTRACTORS) CHO MCQ (BẮT BUỘC):
+- Tất cả phương án sai phải "trông có vẻ hợp lý".
+- Phương án sai PHẢI dựa trên:
+  - lỗi sai phổ biến của người học
+  - khái niệm dễ nhầm lẫn có trong tài liệu
+  - hiểu sai bối cảnh/điều kiện áp dụng
+- Tuyệt đối không tạo đáp án sai kiểu vô lý, hài hước, hoặc sai hiển nhiên.
+
+PHẦN GIẢI THÍCH (analysis) CHO MCQ (BẮT BUỘC):
+- Phải nêu rõ:
+  - Vì sao đáp án đúng là đúng (gắn với chi tiết trong tài liệu)
+  - Vì sao từng phương án còn lại sai/chưa chính xác (A/B/C/D đều phải được nhắc đến)
+- Viết theo cấu trúc ngắn gọn, rõ ràng, dạng gạch đầu dòng càng tốt.
+
+GIỚI HẠN ĐỘ DÀI (để tránh output quá dài):
+- MCQ: question <= %d ký tự; mỗi option <= %d ký tự; analysis <= %d ký tự
+- ESSAY: question <= %d ký tự; sampleAnswer <= %d ký tự; keywords 3-6 từ/cụm từ
+
+YÊU CẦU OUTPUT:
 - Output phải là JSON HỢP LỆ theo schema bên dưới.
-- Giới hạn độ dài để tránh output quá dài:
-  - MCQ: question <= 160 ký tự, mỗi option <= 80 ký tự, analysis <= 200 ký tự
-  - ESSAY: question <= 200 ký tự, sampleAnswer <= 500 ký tự, keywords 3-6 từ/cụm từ
+- Không thêm bất kỳ nội dung/markdown nào ngoài JSON.
 
 SCHEMA JSON (BẮT BUỘC):
 {
@@ -37,12 +82,12 @@ SCHEMA JSON (BẮT BUỘC):
       "question": "...",
       "options": { "A": "...", "B": "...", "C": "...", "D": "..." },
       "correctAnswer": "A|B|C|D",
-      "analysis": "Giải thích ngắn (1-2 câu), bám sát tài liệu"
+      "analysis": "Giải thích: vì sao đúng + vì sao từng phương án còn lại sai (nhắc đủ A/B/C/D)"
     },
     {
       "questionType": "ESSAY",
       "question": "...",
-      "sampleAnswer": "Đáp án mẫu ngắn gọn (2-4 câu)",
+      "sampleAnswer": "Đáp án mẫu ngắn gọn (2-6 câu), tập trung vào lập luận/áp dụng",
       "keywords": ["keyword1","keyword2","keyword3"],
       "maxScore": 10
     }
@@ -53,22 +98,37 @@ TÀI LIỆU:
 \"\"\"
 %s
 \"\"\"
-""".formatted(numberOfQuestions, mcqCount, essayCount, materialText);
+""".formatted(
+                numberOfQuestions,
+                mcqCount,
+                essayCount,
+                MCQ_QUESTION_MAX,
+                MCQ_OPTION_MAX,
+                MCQ_ANALYSIS_MAX,
+                ESSAY_QUESTION_MAX,
+                ESSAY_SAMPLE_MAX,
+                material
+        );
     }
 
     public String buildRetestPrompt(String materialText, int numberOfQuestions, String focusText) {
+        String material = normalizeAndTrim(materialText, MAX_MATERIAL_CHARS);
+        String focus = normalizeAndTrim(focusText, MAX_FOCUS_CHARS);
+
         int essayCount = Math.max(1, (int) Math.round(numberOfQuestions * ESSAY_RATIO));
         int mcqCount = Math.max(0, numberOfQuestions - essayCount);
-
-        String focus = (focusText == null) ? "" : focusText.trim();
-        if (focus.length() > 2500) focus = focus.substring(0, 2500);
 
         return """
 Bạn là hệ thống tạo đề THI LẠI (RETEST) cho HỌC VIÊN, dựa DUY NHẤT vào tài liệu bên dưới.
 
 MỤC TIÊU RETEST:
 - Chỉ tập trung vào các chủ đề/ý mà học viên đã làm sai hoặc yếu (WEAK AREAS).
-- Ưu tiên hỏi sâu, xoáy vào lỗi, không hỏi lan man ngoài WEAK AREAS.
+- Ưu tiên hỏi sâu, xoáy vào lỗi, tránh hỏi lan man ngoài WEAK AREAS.
+
+YÊU CẦU CHẤT LƯỢNG:
+- Không chỉ kiểm tra trí nhớ. Ưu tiên vận dụng, suy luận, tình huống, đọc code/config ngắn.
+- MCQ phải có phương án nhiễu hợp lý dựa trên các lỗi sai phổ biến/nhầm lẫn trong tài liệu.
+- Analysis phải giải thích vì sao đúng + vì sao từng phương án sai (nhắc đủ A/B/C/D).
 
 NHIỆM VỤ:
 - Tạo CHÍNH XÁC %d câu hỏi, gồm:
@@ -81,13 +141,9 @@ WEAK AREAS (BẮT BUỘC bám sát):
 %s
 \"\"\"
 
-QUY TẮC BẮT BUỘC:
-- Bám sát tài liệu, KHÔNG dùng kiến thức ngoài tài liệu.
-- Không thêm nội dung lan man ngoài JSON.
-- Output phải là JSON HỢP LỆ theo schema bên dưới.
-- Giới hạn độ dài để tránh output quá dài:
-  - MCQ: question <= 160 ký tự, mỗi option <= 80 ký tự, analysis <= 200 ký tự
-  - ESSAY: question <= 200 ký tự, sampleAnswer <= 500 ký tự, keywords 3-6 từ/cụm từ
+GIỚI HẠN ĐỘ DÀI (để tránh output quá dài):
+- MCQ: question <= %d ký tự; mỗi option <= %d ký tự; analysis <= %d ký tự
+- ESSAY: question <= %d ký tự; sampleAnswer <= %d ký tự; keywords 3-6 từ/cụm từ
 
 SCHEMA JSON (BẮT BUỘC):
 {
@@ -97,12 +153,12 @@ SCHEMA JSON (BẮT BUỘC):
       "question": "...",
       "options": { "A": "...", "B": "...", "C": "...", "D": "..." },
       "correctAnswer": "A|B|C|D",
-      "analysis": "Giải thích ngắn (1-2 câu), bám sát tài liệu"
+      "analysis": "Giải thích: vì sao đúng + vì sao từng phương án còn lại sai (nhắc đủ A/B/C/D)"
     },
     {
       "questionType": "ESSAY",
       "question": "...",
-      "sampleAnswer": "Đáp án mẫu ngắn gọn (2-4 câu)",
+      "sampleAnswer": "Đáp án mẫu ngắn gọn (2-6 câu), tập trung vào lập luận/áp dụng",
       "keywords": ["keyword1","keyword2","keyword3"],
       "maxScore": 10
     }
@@ -113,6 +169,25 @@ TÀI LIỆU:
 \"\"\"
 %s
 \"\"\"
-""".formatted(numberOfQuestions, mcqCount, essayCount, focus, materialText);
+""".formatted(
+                numberOfQuestions,
+                mcqCount,
+                essayCount,
+                focus,
+                MCQ_QUESTION_MAX,
+                MCQ_OPTION_MAX,
+                MCQ_ANALYSIS_MAX,
+                ESSAY_QUESTION_MAX,
+                ESSAY_SAMPLE_MAX,
+                material
+        );
+    }
+
+    private static String normalizeAndTrim(String s, int maxChars) {
+        if (s == null) return "";
+        String t = s.trim();
+        if (t.isEmpty()) return "";
+        if (t.length() <= maxChars) return t;
+        return t.substring(0, maxChars);
     }
 }

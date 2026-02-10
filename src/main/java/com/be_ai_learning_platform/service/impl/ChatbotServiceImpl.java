@@ -42,6 +42,7 @@ public class ChatbotServiceImpl implements ChatbotService {
     private static final int MAX_KEYWORDS_WORDS = 8;
 
     // ✅ relevance should be stricter (meaningful tokens)
+    // NOTE: Keep as 1 to avoid false negatives on short materials.
     private static final int MIN_RELEVANT_HITS = 1;
 
     private static final int MAX_CONTEXT_CHARS = 1800;
@@ -53,10 +54,16 @@ public class ChatbotServiceImpl implements ChatbotService {
 
     /**
      * ✅ Stop words để tránh match linh tinh kiểu: "là", "ai", "gì", "the", ...
-     * (mày có thể bổ sung thêm theo thực tế)
+     * Bổ sung thêm nhóm từ chung chung hay làm relevance pass sai ("bằng", "mấy", "bao nhiêu"...)
      */
     private static final Set<String> STOP_WORDS = Set.of(
-            "la", "là", "ai", "gi", "gì", "nao", "nào", "the", "a", "an", "and", "or"
+            "la", "là", "ai", "gi", "gì", "nao", "nào",
+            "the", "a", "an", "and", "or",
+
+            // ✅ VN generic (hay làm relevance bị pass sai)
+            "bang", "bằng", "may", "mấy", "bao", "nhiêu", "baonhieu",
+            "cai", "cái", "nay", "này", "do", "đó", "noi", "nói", "ve", "về",
+            "cho", "giup", "giúp"
     );
 
     // ================= PUBLIC API =================
@@ -105,6 +112,17 @@ public class ChatbotServiceImpl implements ChatbotService {
 
         // ✅ luôn lưu message của user để UI render lịch sử ổn định
         saveMessage(session, SenderType.USER, validatedKeywords);
+
+        // ✅ hard-block rõ ràng ngoài phạm vi (toán cơ bản/định danh/người nổi tiếng...)
+        if (isClearlyOutOfScope(validatedKeywords)) {
+            String msg = notInMaterialAnswer(validatedKeywords);
+            saveMessage(session, SenderType.AI, msg);
+
+            ChatAskResponse res = new ChatAskResponse();
+            res.setSessionId(sessionId);
+            res.setAnswer(msg);
+            return res;
+        }
 
         // ✅ relevance check: dùng meaningful tokens để tránh pass sai
         int hits = countKeywordHits(material.getExtractedText(), validatedKeywords);
@@ -182,6 +200,23 @@ public class ChatbotServiceImpl implements ChatbotService {
     }
 
     /**
+     * ✅ Hard block các input rõ ràng ngoài phạm vi tài liệu (toán cơ bản/định danh/người nổi tiếng...)
+     * Mục tiêu: không để các từ khóa generic như "bằng", "mấy" làm pass relevance.
+     */
+    private boolean isClearlyOutOfScope(String keywords) {
+        String s = normalizeSpaces(keywords).toLowerCase(Locale.ROOT);
+
+        // detect arithmetic like "1+1", "2 * 3", "10/2"
+        boolean looksMath = s.matches(".*\\d+\\s*[+\\-*/]\\s*\\d+.*");
+
+        // common identity / celebrity bait (có thể mở rộng sau)
+        boolean looksIdentity = s.contains("tao la ai") || s.contains("tôi là ai") || s.contains("toi la ai");
+        boolean looksCelebrity = s.contains("son tung") || s.contains("sơn tùng");
+
+        return looksMath || looksIdentity || looksCelebrity;
+    }
+
+    /**
      * US17: keyword-only validation
      */
     private String validateKeywords(String raw) {
@@ -206,13 +241,6 @@ public class ChatbotServiceImpl implements ChatbotService {
 
         return String.join(" ", words);
     }
-
-    /**
-     * ✅ Tách keyword meaningful:
-     * - bỏ stopwords ("là", "ai", ...)
-     * - bỏ token quá ngắn (<3)
-     * - distinct để tránh đếm lặp
-     */
     private List<String> extractMeaningfulTokens(String keywords) {
         String norm = normalizeSpaces(keywords);
         if (norm.isBlank()) return List.of();
@@ -222,6 +250,8 @@ public class ChatbotServiceImpl implements ChatbotService {
                 .map(String::trim)
                 .filter(t -> !t.isBlank())
                 .filter(t -> t.length() >= 3)
+                // ✅ token phải có chữ cái
+                .filter(t -> t.matches(".*\\p{L}+.*"))
                 .filter(t -> !STOP_WORDS.contains(t))
                 .distinct()
                 .collect(Collectors.toList());
@@ -233,7 +263,7 @@ public class ChatbotServiceImpl implements ChatbotService {
         String hay = normalize(text);
         List<String> tokens = extractMeaningfulTokens(keywords);
 
-        // nếu toàn stopwords => coi như out-of-scope luôn
+        // nếu toàn stopwords / không meaningful => coi như out-of-scope luôn
         if (tokens.isEmpty()) return 0;
 
         int hits = 0;
@@ -261,31 +291,40 @@ public class ChatbotServiceImpl implements ChatbotService {
     }
 
     /**
-     * ✅ Prompt: ép AI trả lời NGẮN + MƠ HỒ + GỢI Ý
-     * - 3–5 bullet, bắt đầu bằng "- "
-     * - mỗi bullet <= 12 từ
-     * - không ví dụ cụ thể, không step-by-step, không code
-     * - không đáp án / không chọn A/B/C/D
+     * 🔒 STRICT IN-SCOPE PROMPT
+     * - AI CHỈ được trả lời về khái niệm xuất hiện TRỰC TIẾP trong NGỮ CẢNH
+     * - Bất kỳ từ khóa nào KHÔNG có trong ngữ cảnh → PHẢI TỪ CHỐI
+     * - Không suy luận, không kiến thức phổ thông
      */
     private String buildPrompt(String keywords, String context) {
         return """
-                Bạn là trợ giảng trong lúc học viên đang làm bài.
-                NHIỆM VỤ: chỉ đưa gợi ý mơ hồ để học viên tự suy nghĩ.
+                Bạn là trợ giảng hỗ trợ học viên TRONG PHẠM VI TÀI LIỆU HIỆN TẠI.
 
-                RÀNG BUỘC BẮT BUỘC:
-                - Chỉ dựa trên NGỮ CẢNH được cung cấp (không kiến thức ngoài).
-                - KHÔNG đưa đáp án, KHÔNG giải bài, KHÔNG chọn A/B/C/D.
-                - KHÔNG hướng dẫn từng bước, KHÔNG code, KHÔNG công thức chi tiết.
-                - Viết thật NGẮN: 3 đến 5 gạch đầu dòng.
+                NGUYÊN TẮC TUYỆT ĐỐI (PHẢI TUÂN THỦ):
+                - CHỈ sử dụng thông tin CÓ TRONG NGỮ CẢNH bên dưới.
+                - KHÔNG dùng kiến thức phổ thông, kiến thức đời sống, hay suy luận ngoài tài liệu.
+                - Nếu TỪ KHÓA KHÔNG XUẤT HIỆN RÕ RÀNG trong NGỮ CẢNH → PHẢI TỪ CHỐI TRẢ LỜI.
+                - KHÔNG trả lời các câu hỏi như: toán học cơ bản, người nổi tiếng, định danh cá nhân,
+                  kiến thức ngoài bài học (ví dụ: "1+1 bằng mấy", "tao là ai", "sơn tùng là ai", ...).
+
+                ĐỊNH DẠNG BẮT BUỘC KHI TRẢ LỜI:
+                - Chỉ đưa GỢI Ý MƠ HỒ, không giải thích chi tiết.
+                - 3 đến 5 gạch đầu dòng.
                 - Mỗi gạch đầu dòng tối đa 12 từ.
-                - Dùng đúng format: mỗi dòng bắt đầu bằng "- ".
+                - Mỗi dòng bắt đầu bằng "- ".
+                - KHÔNG đáp án, KHÔNG chọn A/B/C/D, KHÔNG hướng dẫn từng bước.
 
-                TỪ KHÓA: %s
+                TRƯỜNG HỢP NGOÀI PHẠM VI:
+                - Nếu từ khóa không nằm trong ngữ cảnh → trả lời DUY NHẤT câu sau:
+                  "Nội dung này không nằm trong tài liệu hiện tại nên mình không thể hỗ trợ."
 
-                NGỮ CẢNH (trích):
+                TỪ KHÓA:
                 %s
 
-                TRẢ LỜI (chỉ 3-5 dòng, mỗi dòng bắt đầu "- "):
+                NGỮ CẢNH (TRÍCH TỪ TÀI LIỆU):
+                %s
+
+                TRẢ LỜI:
                 """.formatted(keywords, context);
     }
 
@@ -294,14 +333,15 @@ public class ChatbotServiceImpl implements ChatbotService {
      * - chặn đáp án / giải chi tiết
      * - normalize bullet về "- "
      * - cắt ngắn bullet, giới hạn số dòng
+     * - ✅ nếu AI không tuân thủ "ngoài phạm vi" → ép về notInMaterialAnswer
      */
     private String postFilter(String answer, String keywords) {
         if (answer == null) return fallbackVagueHint(keywords);
 
         String a = answer.trim();
+        String lower = a.toLowerCase(Locale.ROOT);
 
         // hard blocks for "answer revealing"
-        String lower = a.toLowerCase(Locale.ROOT);
         if (lower.contains("đáp án") || lower.contains("correct answer")
                 || lower.contains("chọn đáp án") || lower.contains("choose option")
                 || lower.contains("a)") || lower.contains("b)") || lower.contains("c)") || lower.contains("d)")

@@ -32,8 +32,6 @@ public class GeminiStructuredClient {
         if (jsonContract == null || jsonContract.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "JSON contract is empty");
         }
-
-        // ✅ provider/model/temperature/key lấy từ DB
         String provider = settingsService.getAiProvider();
         if (!"GEMINI".equalsIgnoreCase(provider)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "AI provider is not GEMINI");
@@ -64,7 +62,7 @@ public class GeminiStructuredClient {
                 "generationConfig", Map.of(
                         "temperature", temperature,
                         "topP", 0.1,
-                        "maxOutputTokens", 8192
+                        "maxOutputTokens", 16384
                 )
         );
 
