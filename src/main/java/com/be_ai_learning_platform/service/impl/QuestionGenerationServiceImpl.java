@@ -8,6 +8,7 @@ import com.be_ai_learning_platform.entity.enums.MaterialStatus;
 import com.be_ai_learning_platform.repository.LearningMaterialRepository;
 import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
+import com.be_ai_learning_platform.service.SystemSettingsService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -16,14 +17,11 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class QuestionGenerationServiceImpl implements QuestionGenerationService {
 
-    // ✅ Giảm input để tiết kiệm token + giảm nguy cơ model trả cắt ngang
     private static final int MAX_EXTRACTED_CHARS = 6000;
 
-    // ✅ Retry nhẹ cho lỗi gọi AI (network/transient)
     private static final int CALL_RETRY_TIMES = 1;
     private static final long CALL_RETRY_BACKOFF_MS = 700;
 
-    // ✅ Retry riêng cho lỗi parse JSON (Gemini hay trả cắt ngang JSON)
     private static final int PARSE_RETRY_TIMES = 1;
     private static final int PARSE_RETRY_TRIMMED_CHARS = 3000;
 
@@ -31,22 +29,26 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
     private final UserRepository userRepo;
     private final GeminiStructuredClient ai;
     private final PromptBuilder promptBuilder;
+    private final SystemSettingsService settingsService;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public QuestionGenerationServiceImpl(
             LearningMaterialRepository materialRepo,
             UserRepository userRepo,
             GeminiStructuredClient ai,
-            PromptBuilder promptBuilder
+            PromptBuilder promptBuilder,
+            SystemSettingsService settingsService
     ) {
         this.materialRepo = materialRepo;
         this.userRepo = userRepo;
         this.ai = ai;
         this.promptBuilder = promptBuilder;
+        this.settingsService = settingsService;
     }
 
     @Override
-    public GenerateQuestionsResponse generate(String currentEmail, Long materialId, int numberOfQuestions) {
+    public GenerateQuestionsResponse generate(String currentEmail, Long materialId, int ignoredNumberOfQuestions) {
 
         User me = userRepo.findByEmail(currentEmail)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
@@ -67,27 +69,35 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
                 ? extracted.substring(0, MAX_EXTRACTED_CHARS)
                 : extracted;
 
-        String prompt = promptBuilder.buildPrompt(trimmed, numberOfQuestions);
+        int mcqCount = Math.max(0, settingsService.getMcqQuestionCount());
+        int essayCount = Math.max(0, settingsService.getEssayQuestionCount());
+        int totalQuestions = mcqCount + essayCount;
+
+        if (totalQuestions <= 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "System settings invalid: totalQuestions must be > 0");
+        }
+
+        String prompt = promptBuilder.buildPrompt(trimmed, mcqCount, essayCount);
 
         // 1) Call AI (with retry for transient/quota)
-        String json = callGeminiWithRetry(prompt, numberOfQuestions);
+        String json = callGeminiWithRetry(prompt, totalQuestions);
 
         // 2) Parse JSON (with retry if JSON bị cắt/ngắt)
-        GenerateQuestionsResponse res = parseWithRetry(json, trimmed, materialId, numberOfQuestions);
+        GenerateQuestionsResponse res = parseWithRetry(json, trimmed, materialId, totalQuestions, mcqCount, essayCount);
 
         // meta
         res.setMaterialId(materialId);
-        res.setNumberOfQuestions(numberOfQuestions);
+        res.setNumberOfQuestions(totalQuestions);
 
         // validate business
-        QuestionValidator.validate(res, numberOfQuestions);
+        QuestionValidator.validate(res, totalQuestions);
+        QuestionDistributionValidator.validate(res, mcqCount, essayCount);
 
         return res;
     }
 
-
     @Override
-    public GenerateQuestionsResponse generateRetest(String currentEmail, Long materialId, int numberOfQuestions, String focusText) {
+    public GenerateQuestionsResponse generateRetest(String currentEmail, Long materialId, int ignoredNumberOfQuestions, String focusText) {
 
         User me = userRepo.findByEmail(currentEmail)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
@@ -108,16 +118,25 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
                 ? extracted.substring(0, MAX_EXTRACTED_CHARS)
                 : extracted;
 
-        String prompt = promptBuilder.buildRetestPrompt(trimmed, numberOfQuestions, focusText);
+        int mcqCount = Math.max(0, settingsService.getMcqQuestionCount());
+        int essayCount = Math.max(0, settingsService.getEssayQuestionCount());
+        int totalQuestions = mcqCount + essayCount;
 
-        String json = callGeminiWithRetry(prompt, numberOfQuestions);
+        if (totalQuestions <= 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "System settings invalid: totalQuestions must be > 0");
+        }
 
-        GenerateQuestionsResponse res = parseWithRetry(json, trimmed, materialId, numberOfQuestions);
+        String prompt = promptBuilder.buildRetestPrompt(trimmed, mcqCount, essayCount, focusText);
+
+        String json = callGeminiWithRetry(prompt, totalQuestions);
+
+        GenerateQuestionsResponse res = parseWithRetry(json, trimmed, materialId, totalQuestions, mcqCount, essayCount);
 
         res.setMaterialId(materialId);
-        res.setNumberOfQuestions(numberOfQuestions);
+        res.setNumberOfQuestions(totalQuestions);
 
-        QuestionValidator.validate(res, numberOfQuestions);
+        QuestionValidator.validate(res, totalQuestions);
+        QuestionDistributionValidator.validate(res, mcqCount, essayCount);
 
         return res;
     }
@@ -126,7 +145,9 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
             String json,
             String trimmed,
             Long materialId,
-            int numberOfQuestions
+            int totalQuestions,
+            int mcqCount,
+            int essayCount
     ) {
         Exception last = null;
         String currentJson = json;
@@ -137,16 +158,14 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
             } catch (Exception e) {
                 last = e;
 
-                // nếu còn lượt retry parse -> gọi lại AI với input ngắn hơn
                 if (i < PARSE_RETRY_TIMES) {
                     String shorter = trimmed.length() > PARSE_RETRY_TRIMMED_CHARS
                             ? trimmed.substring(0, PARSE_RETRY_TRIMMED_CHARS)
                             : trimmed;
 
-                    String retryPrompt = promptBuilder.buildPrompt(shorter, numberOfQuestions);
+                    String retryPrompt = promptBuilder.buildPrompt(shorter, mcqCount, essayCount);
 
-                    // call lại (vẫn có guard quota)
-                    currentJson = callGeminiWithRetry(retryPrompt, numberOfQuestions);
+                    currentJson = callGeminiWithRetry(retryPrompt, totalQuestions);
                     continue;
                 }
 
@@ -160,22 +179,20 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
             }
         }
 
-        // should never reach
         throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI output invalid JSON", last);
     }
 
-    private String callGeminiWithRetry(String prompt, int numberOfQuestions) {
+    private String callGeminiWithRetry(String prompt, int totalQuestions) {
         Exception last = null;
 
         for (int i = 0; i <= CALL_RETRY_TIMES; i++) {
             try {
-                return ai.generateJsonBySchema(prompt, numberOfQuestions);
+                return ai.generateJsonBySchema(prompt, totalQuestions);
             } catch (Exception e) {
                 last = e;
 
                 String msg = safeMsg(e);
 
-                // ✅ Quota / rate-limit -> 503 để FE show toast “thử lại sau”
                 if (isQuotaOrRateLimit(msg)) {
                     throw new ResponseStatusException(
                             HttpStatus.SERVICE_UNAVAILABLE,
@@ -184,7 +201,6 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
                     );
                 }
 
-                // transient -> retry nhẹ
                 if (i < CALL_RETRY_TIMES) {
                     sleep(CALL_RETRY_BACKOFF_MS);
                     continue;

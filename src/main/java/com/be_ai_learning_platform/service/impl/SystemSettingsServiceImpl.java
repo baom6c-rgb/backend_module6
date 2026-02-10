@@ -44,6 +44,14 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Value("${app.settings.default.adminEmails:}")
     private String defaultAdminEmails;
 
+    // ===== Practice defaults (NEW) =====
+    @Value("${app.settings.default.practice.mcqQuestionCount:8}")
+    private int defaultMcqQuestionCount;
+
+    @Value("${app.settings.default.practice.essayQuestionCount:2}")
+    private int defaultEssayQuestionCount;
+
+    // ===== Monthly report defaults =====
     @Value("${app.settings.default.monthlyReport.enabled:false}")
     private boolean defaultMonthlyReportEnabled;
 
@@ -95,6 +103,16 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         s.setRetestCooldownMinutes(defaultRetestCooldownMinutes);
         s.setEmailNotificationsEnabled(defaultEmailEnabled);
         s.setAdminEmails(normalizeEmails(defaultAdminEmails));
+
+        // ===== practice defaults (NEW) =====
+        int mcq = Math.max(0, defaultMcqQuestionCount);
+        int essay = Math.max(0, defaultEssayQuestionCount);
+        if (mcq + essay <= 0) {
+            mcq = 8;
+            essay = 2;
+        }
+        s.setMcqQuestionCount(mcq);
+        s.setEssayQuestionCount(essay);
 
         // ===== monthly report defaults =====
         s.setMonthlyReportEnabled(defaultMonthlyReportEnabled);
@@ -177,6 +195,21 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
                 .toArray(String[]::new);
     }
 
+    // ===== Practice getters (NEW) =====
+    @Override
+    @Transactional(readOnly = true)
+    public int getMcqQuestionCount() {
+        Integer v = getSettings().getMcqQuestionCount();
+        return v == null ? 0 : Math.max(0, v);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public int getEssayQuestionCount() {
+        Integer v = getSettings().getEssayQuestionCount();
+        return v == null ? 0 : Math.max(0, v);
+    }
+
     // ===================== Admin API (base settings) =====================
 
     @Override
@@ -198,6 +231,17 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         }
         if (req.getRetestCooldownMinutes() == null || req.getRetestCooldownMinutes() < 0 || req.getRetestCooldownMinutes() > 1440) {
             throw new IllegalArgumentException("retestCooldownMinutes must be 0..1440");
+        }
+
+        // practice validation (NEW)
+        if (req.getMcqQuestionCount() == null || req.getMcqQuestionCount() < 0) {
+            throw new IllegalArgumentException("mcqQuestionCount must be >= 0");
+        }
+        if (req.getEssayQuestionCount() == null || req.getEssayQuestionCount() < 0) {
+            throw new IllegalArgumentException("essayQuestionCount must be >= 0");
+        }
+        if (req.getMcqQuestionCount() + req.getEssayQuestionCount() <= 0) {
+            throw new IllegalArgumentException("Total questions must be > 0");
         }
 
         // monthly optional validation
@@ -236,6 +280,10 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         s.setRetestCooldownMinutes(req.getRetestCooldownMinutes());
         s.setEmailNotificationsEnabled(Boolean.TRUE.equals(req.getEmailNotificationsEnabled()));
         s.setAdminEmails(normalizeEmails(req.getAdminEmails()));
+
+        // practice updates (NEW)
+        s.setMcqQuestionCount(Math.max(0, req.getMcqQuestionCount()));
+        s.setEssayQuestionCount(Math.max(0, req.getEssayQuestionCount()));
 
         // monthly updates (optional)
         if (req.getMonthlyReportEnabled() != null) {
@@ -314,13 +362,13 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     public String requireAiApiKey() {
         SystemSettings s = getSettings();
         if (!Boolean.TRUE.equals(s.getAiEnabled())) {
-            throw new IllegalStateException("AI is disabled by system settings");
+            throw new IllegalStateException("AI is disabled by admin");
         }
-        String key = safeTrim(s.getAiApiKey());
+        String key = s.getAiApiKey();
         if (key == null || key.isBlank()) {
-            throw new IllegalStateException("AI apiKey is missing (Admin > Settings > Model AI)");
+            throw new IllegalStateException("AI api key is empty");
         }
-        return key;
+        return key.trim();
     }
 
     @Override
@@ -339,7 +387,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Transactional(readOnly = true)
     public double getAiTemperature() {
         Double t = getSettings().getAiTemperature();
-        return clamp01(t == null ? 0.0 : t);
+        return t == null ? 0.0 : clamp01(t);
     }
 
     @Override
@@ -348,84 +396,90 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return Boolean.TRUE.equals(getSettings().getAiEnabled());
     }
 
-    // ===================== Mapping =====================
+    // ===================== mapping =====================
 
     private SystemSettingsResponse toResponse(SystemSettings s) {
         SystemSettingsResponse r = new SystemSettingsResponse();
+
         r.setPassScore(s.getPassScore());
         r.setMinutesPerQuestion(s.getMinutesPerQuestion());
         r.setRetestCooldownMinutes(s.getRetestCooldownMinutes());
-        r.setEmailNotificationsEnabled(Boolean.TRUE.equals(s.getEmailNotificationsEnabled()));
+
+        r.setEmailNotificationsEnabled(s.getEmailNotificationsEnabled());
         r.setAdminEmails(s.getAdminEmails());
 
-        r.setMonthlyReportEnabled(Boolean.TRUE.equals(s.getMonthlyReportEnabled()));
+        // practice (NEW)
+        r.setMcqQuestionCount(s.getMcqQuestionCount());
+        r.setEssayQuestionCount(s.getEssayQuestionCount());
+
+        // monthly report
+        r.setMonthlyReportEnabled(s.getMonthlyReportEnabled());
         r.setMonthlyReportDayOfMonth(s.getMonthlyReportDayOfMonth());
-        r.setMonthlyReportTime(s.getMonthlyReportTime() == null ? "23:59" : s.getMonthlyReportTime().toString());
+        r.setMonthlyReportTime(s.getMonthlyReportTime() == null ? null : s.getMonthlyReportTime().toString());
         r.setMonthlyReportTimeZone(s.getMonthlyReportTimeZone());
         r.setMonthlyReportLastSentYearMonth(s.getMonthlyReportLastSentYearMonth());
+
         r.setUpdatedAt(s.getUpdatedAt());
         return r;
-    }
-
-    private AiSettingsResponse toAiResponse(SystemSettings s) {
-        AiSettingsResponse r = new AiSettingsResponse();
-        r.setAiProvider(normalizeProvider(s.getAiProvider()));
-        r.setAiApiKeyMasked(maskKey(s.getAiApiKey()));
-        r.setAiModel(normalizeModel(s.getAiModel()));
-        r.setAiTemperature(clamp01(s.getAiTemperature() == null ? 0.0 : s.getAiTemperature()));
-        r.setAiEnabled(Boolean.TRUE.equals(s.getAiEnabled()));
-        r.setUpdatedAt(s.getUpdatedAt());
-        return r;
-    }
-
-    // ===================== Helpers =====================
-
-    private String normalizeEmails(String raw) {
-        if (raw == null) return "";
-        return Arrays.stream(raw.split(","))
-                .map(String::trim)
-                .filter(e -> !e.isBlank())
-                .collect(Collectors.joining(","));
-    }
-
-    private String safeTrim(String s) {
-        if (s == null) return null;
-        String t = s.trim();
-        return t.isBlank() ? null : t;
-    }
-
-    private String normalizeProvider(String raw) {
-        String p = safeTrim(raw);
-        if (p == null) return "GEMINI";
-        return p.toUpperCase();
-    }
-
-    private String normalizeModel(String raw) {
-        String m = safeTrim(raw);
-        if (m == null) return "gemini-1.5-pro";
-        return m;
     }
 
     /**
-     * If blank => return null (meaning "no update" in updateAi).
+     * ✅ FIX: AiSettingsResponse là POJO (no-args) => set fields bằng setter.
+     * - Không trả full secret. Chỉ trả masked key.
      */
-    private String normalizeOptionalSecret(String raw) {
-        String t = safeTrim(raw);
-        return (t == null) ? null : t;
+    private AiSettingsResponse toAiResponse(SystemSettings s) {
+        AiSettingsResponse r = new AiSettingsResponse();
+
+        r.setAiProvider(normalizeProvider(s.getAiProvider()));
+        r.setAiModel(normalizeModel(s.getAiModel()));
+        r.setAiTemperature(s.getAiTemperature() == null ? 0.0 : clamp01(s.getAiTemperature()));
+        r.setAiEnabled(Boolean.TRUE.equals(s.getAiEnabled()));
+
+        r.setAiApiKeyMasked(maskApiKey(s.getAiApiKey()));
+        r.setUpdatedAt(s.getUpdatedAt());
+
+        return r;
     }
 
-    private String maskKey(String key) {
-        String k = safeTrim(key);
-        if (k == null) return null;
-        if (k.length() < 8) return "****";
-        String head = k.substring(0, 3);
-        String tail = k.substring(k.length() - 3);
-        return head + "****" + tail;
+    // ===================== utils =====================
+
+    private String normalizeEmails(String csv) {
+        if (csv == null) return "";
+        return Arrays.stream(csv.split(","))
+                .map(String::trim)
+                .filter(x -> !x.isBlank())
+                .distinct()
+                .collect(Collectors.joining(","));
+    }
+
+    private String normalizeProvider(String s) {
+        if (s == null || s.isBlank()) return "GEMINI";
+        return s.trim().toUpperCase();
+    }
+
+    private String normalizeModel(String s) {
+        if (s == null || s.isBlank()) return "gemini-2.5-flash";
+        return s.trim();
     }
 
     private double clamp01(double v) {
         if (v < 0) return 0;
         if (v > 1) return 1;
         return v;
+    }
+
+    private String normalizeOptionalSecret(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isBlank() ? null : t;
+    }
+
+    private String maskApiKey(String key) {
+        if (key == null || key.isBlank()) return null;
+
+        String k = key.trim();
+        if (k.length() <= 6) return "***";
+
+        return k.substring(0, 3) + "****" + k.substring(k.length() - 3);
     }
 }

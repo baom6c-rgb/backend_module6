@@ -1,7 +1,7 @@
 package com.be_ai_learning_platform.service;
 
-import com.be_ai_learning_platform.dto.request.UpdateSystemSettingsRequest;
 import com.be_ai_learning_platform.dto.request.UpdateAiSettingsRequest;
+import com.be_ai_learning_platform.dto.request.UpdateSystemSettingsRequest;
 import com.be_ai_learning_platform.dto.response.AiSettingsResponse;
 import com.be_ai_learning_platform.dto.response.SystemSettingsResponse;
 import com.be_ai_learning_platform.entity.SystemSettings;
@@ -32,4 +32,8 @@ public interface SystemSettingsService {
     int getRetestCooldownMinutes();
     boolean isEmailNotificationEnabled();
     String[] getAdminEmails();
+
+    // ===== Practice settings (NEW) =====
+    int getMcqQuestionCount();
+    int getEssayQuestionCount();
 }
