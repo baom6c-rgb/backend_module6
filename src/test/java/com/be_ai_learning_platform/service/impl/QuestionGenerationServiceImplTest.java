@@ -7,7 +7,6 @@ import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.MaterialStatus;
 import com.be_ai_learning_platform.repository.LearningMaterialRepository;
 import com.be_ai_learning_platform.repository.UserRepository;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
