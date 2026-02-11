@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.ai.GeminiResponsesClient;
+import com.be_ai_learning_platform.AI.GeminiResponsesClient;
 import com.be_ai_learning_platform.dto.response.ChatAskResponse;
 import com.be_ai_learning_platform.entity.ChatSession;
 import com.be_ai_learning_platform.entity.LearningMaterial;

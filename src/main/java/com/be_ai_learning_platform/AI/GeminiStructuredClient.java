@@ -1,4 +1,4 @@
-package com.be_ai_learning_platform.ai;
+package com.be_ai_learning_platform.AI;
 
 import com.be_ai_learning_platform.service.SystemSettingsService;
 import org.springframework.http.HttpStatus;
