@@ -451,17 +451,40 @@ Chào bạn,
 Điểm mạnh:
 - Bạn đã hoàn thành bài và có nỗ lực trả lời.
 - Một số câu làm đúng hướng theo học liệu.
+
 Điểm yếu:
 - Một số ý trọng tâm còn thiếu/nhầm.
 - Cách trình bày chưa rõ, thiếu keywords quan trọng.
+
 Gợi ý ôn tập:
-- Bấm “Xem lại đáp án” để xem câu sai và giải thích chi tiết.
-- Ôn lại khái niệm chính và ví dụ trong học liệu.
-- Làm lại bài dưới giới hạn thời gian để tăng tốc độ.
+Tiêu đề: Hướng dẫn ôn tập cá nhân hóa
+Môn học: Lập trình
+Chủ đề: Ôn theo câu sai
+Gợi ý ôn tập:
+- Mở “Xem lại đáp án”, ghi lại 3 lỗi sai lặp lại nhiều nhất.
+- Với mỗi lỗi, viết 1 quy tắc ngắn: “Nếu gặp dạng này, mình sẽ…”.
+- Làm lại (Retest) sau cooldown và so sánh kết quả.
+
+Các khái niệm chính:
+- Ôn theo câu sai và lý do sai
+
+Danh sách từ vựng:
+- Keyword, distractor, rubric, analysis
+
+Câu hỏi ôn tập:
+- Bạn sai nhiều nhất ở dạng câu nào? Vì sao?
+- Điều kiện nào khiến đáp án đúng trở thành đúng?
+- Bạn đã bỏ sót keyword nào trong câu tự luận?
+- Viết lại 1 ví dụ ngắn áp dụng đúng kiến thức.
+- Lần sau gặp lại dạng này, bạn sẽ kiểm tra điều gì đầu tiên?
 """.trim();
         }
 
         String formatted = formatAiFeedback(me.getFullName(), aiFeedback);
+
+        // ✅ Guard: không bao giờ mất Điểm mạnh/Điểm yếu + cấm placeholder
+        formatted = ensureStrengthWeaknessPresent(me.getFullName(), formatted, examQuestions, results, scorePct);
+
         attempt.setAiFeedback(formatted);
 
         attemptRepo.save(attempt);
@@ -827,6 +850,16 @@ Gợi ý ôn tập:
         }
 
         String formatted = formatAiFeedback(session.userFullName, rawAiFeedback);
+
+        // ✅ Guard: không bao giờ mất Điểm mạnh/Điểm yếu + cấm placeholder
+        formatted = ensureStrengthWeaknessPresent(
+                session.userFullName,
+                formatted,
+                buildQuestionsFromSession(session),
+                buildResultsFromV2(session, resultsV2),
+                scorePct
+        );
+
         attempt.setAiFeedback(formatted);
 
         attemptRepo.save(attempt);
@@ -1431,6 +1464,8 @@ Bài làm học viên: %s
         String name = (userFullName == null || userFullName.isBlank()) ? "bạn" : userFullName.trim();
 
         StringBuilder sb = new StringBuilder();
+
+        // ✅ Updated template (bỏ Tóm tắt, dùng Gợi ý ôn tập + cấm placeholder)
         sb.append("""
 Bạn là trợ giảng. Hãy nhận xét bài làm của học viên bằng tiếng Việt.
 YÊU CẦU QUAN TRỌNG:
@@ -1446,11 +1481,35 @@ YÊU CẦU QUAN TRỌNG:
 - ...
 
 Gợi ý ôn tập:
+(Trả về đúng theo mẫu sau, giữ nguyên nhãn và thứ tự)
+
+Tiêu đề: ...
+Môn học: ...
+Chủ đề: ...
+Gợi ý ôn tập:
+- ...
 - ...
 - ...
 
-QUY TẮC:
-- Chỉ dùng gạch đầu dòng bắt đầu bằng "- " trong từng mục.
+Các khái niệm chính:
+- ...
+
+Danh sách từ vựng:
+- ...
+
+Câu hỏi ôn tập:
+- ...
+- ...
+- ...
+- ...
+- ...
+
+QUY TẮC BẮT BUỘC:
+- KHÔNG được dùng ký hiệu placeholder như "...", "…", "(Chưa có)", "(Chưa xác định)".
+- Mỗi mục "Điểm mạnh" và "Điểm yếu" phải có ít nhất 2 bullet "- " và phải dựa vào dữ liệu chấm điểm.
+- Trong "Gợi ý ôn tập" (khối template), phần "Gợi ý ôn tập:" phải có 3 bullet "- " (cụ thể việc cần làm).
+- "Câu hỏi ôn tập" bắt buộc đúng 5 câu (mỗi câu 1 bullet).
+- Tuyệt đối KHÔNG dùng ký tự backtick: `
 - Không markdown, không in đậm, không đánh số.
 - Ngắn gọn nhưng rõ ràng. Không bịa kiến thức ngoài phạm vi câu hỏi.
 """.formatted(name));
@@ -1494,12 +1553,54 @@ QUY TẮC:
                 : session.userFullName.trim();
 
         StringBuilder sb = new StringBuilder();
+
+        // ✅ Updated template (bỏ Tóm tắt, dùng Gợi ý ôn tập + cấm placeholder)
         sb.append("""
 Bạn là trợ giảng. Hãy nhận xét bài làm của học viên bằng tiếng Việt.
-Yêu cầu:
+YÊU CẦU QUAN TRỌNG:
 - BẮT ĐẦU bằng đúng 1 câu chào: "Chào %s,"
-- Sau đó chỉ trả về đúng 3 mục: Điểm mạnh / Điểm yếu / Gợi ý ôn tập
-- Mỗi mục dùng bullet "- "
+- Sau đó chỉ trả về đúng 3 mục sau theo format và KHÔNG thêm mục khác:
+
+Điểm mạnh:
+- ...
+- ...
+
+Điểm yếu:
+- ...
+- ...
+
+Gợi ý ôn tập:
+(Trả về đúng theo mẫu sau, giữ nguyên nhãn và thứ tự)
+
+Tiêu đề: ...
+Môn học: ...
+Chủ đề: ...
+Gợi ý ôn tập:
+- ...
+- ...
+- ...
+
+Các khái niệm chính:
+- ...
+
+Danh sách từ vựng:
+- ...
+
+Câu hỏi ôn tập:
+- ...
+- ...
+- ...
+- ...
+- ...
+
+QUY TẮC BẮT BUỘC:
+- KHÔNG được dùng ký hiệu placeholder như "...", "…", "(Chưa có)", "(Chưa xác định)".
+- Mỗi mục "Điểm mạnh" và "Điểm yếu" phải có ít nhất 2 bullet "- " và phải dựa vào dữ liệu chấm điểm.
+- Trong "Gợi ý ôn tập" (khối template), phần "Gợi ý ôn tập:" phải có 3 bullet "- " (cụ thể việc cần làm).
+- "Câu hỏi ôn tập" bắt buộc đúng 5 câu (mỗi câu 1 bullet).
+- Tuyệt đối KHÔNG dùng ký tự backtick: `
+- Không markdown, không in đậm, không đánh số.
+- Ngắn gọn nhưng rõ ràng. Không bịa kiến thức ngoài phạm vi câu hỏi.
 """.formatted(name));
 
         sb.append("\nĐiểm tổng: ").append(scorePct).append("/100\n\n");
@@ -1543,7 +1644,9 @@ Yêu cầu:
             text = text.trim();
         }
 
-        text = text.replace("**", "")
+        // ✅ strip markdown-ish + backticks
+        text = text.replace("`", "")
+                .replace("**", "")
                 .replace("__", "")
                 .replace("##", "")
                 .replace("###", "")
@@ -1566,19 +1669,8 @@ Yêu cầu:
         }
 
         if (lines.isEmpty()) {
-            return """
-Chào %s,
-Điểm mạnh:
-- Bạn đã hoàn thành bài và có nỗ lực trả lời.
-- Một số ý trả lời đúng hướng theo học liệu.
-Điểm yếu:
-- Còn thiếu/nhầm ở các ý trọng tâm trong một số câu.
-- Trình bày chưa đủ rõ, thiếu keywords quan trọng.
-Gợi ý ôn tập:
-- Xem lại các câu sai trong phần “Xem lại đáp án”.
-- Ôn lại khái niệm chính và ví dụ trong học liệu.
-- Làm lại bài dưới giới hạn thời gian để tăng tốc độ.
-""".formatted(name).trim();
+            // keep minimal (không placeholder kiểu "..."/"(Chưa có)")
+            return buildRuleBasedStrengthWeakness(name, List.of(), List.of(), 0) + "\n" + minimalStudyGuide();
         }
 
         String first = lines.get(0).trim();
@@ -1792,5 +1884,203 @@ Gợi ý ôn tập:
                     "System settings invalid: totalQuestions must be <= " + DEFAULT_MAX_QUESTIONS
             );
         }
+    }
+
+    // =========================================================
+    // Guard helpers: ensure strengths/weakness always present + no placeholders
+    // =========================================================
+    private String ensureStrengthWeaknessPresent(
+            String userFullName,
+            String formatted,
+            List<Question> questions,
+            List<AnswerResult> results,
+            int scorePct
+    ) {
+        String text = formatted == null ? "" : formatted.trim();
+
+        // nếu đã có đủ 2 section + có bullet thì ok
+        if (hasSectionWithBullets(text, "Điểm mạnh:") && hasSectionWithBullets(text, "Điểm yếu:")) {
+            // nhưng vẫn phải đảm bảo không còn placeholder "..." lộ ra
+            if (!containsPlaceholder(text)) return text;
+        }
+
+        // tách phần "Gợi ý ôn tập:" trở đi (nếu có) để giữ lại
+        String studyGuide = extractStudyGuideBlock(text);
+
+        // tự build strengths/weakness từ kết quả chấm
+        String safe = buildRuleBasedStrengthWeakness(userFullName, questions, results, scorePct);
+
+        // nối lại studyGuide nếu có
+        if (studyGuide != null && !studyGuide.isBlank()) {
+            safe = (safe + "\n" + studyGuide.trim()).trim();
+        } else {
+            // nếu không có study guide thì nhét một study guide tối thiểu (không dùng placeholder)
+            safe = (safe + "\n" + minimalStudyGuide()).trim();
+        }
+        return safe;
+    }
+
+    private boolean hasSectionWithBullets(String text, String header) {
+        int i = indexOfIgnoreCase(text, header);
+        if (i < 0) return false;
+        String tail = text.substring(i + header.length());
+        // có ít nhất 2 bullet "- " sau header (trước khi gặp header tiếp theo)
+        int next = nextHeaderIndex(tail);
+        String block = (next >= 0) ? tail.substring(0, next) : tail;
+        long bullets = Arrays.stream(block.split("\\r?\\n"))
+                .map(String::trim)
+                .filter(s -> s.startsWith("- "))
+                .count();
+        return bullets >= 2;
+    }
+
+    private boolean containsPlaceholder(String text) {
+        String t = text == null ? "" : text;
+        return t.contains("...") || t.contains("…") || t.contains("(Chưa có)") || t.contains("(Chưa xác định)");
+    }
+
+    private String extractStudyGuideBlock(String text) {
+        if (text == null) return "";
+        int i = indexOfIgnoreCase(text, "Gợi ý ôn tập:");
+        if (i < 0) return "";
+        return text.substring(i).trim();
+    }
+
+    private int indexOfIgnoreCase(String text, String needle) {
+        if (text == null || needle == null) return -1;
+        return text.toLowerCase(Locale.ROOT).indexOf(needle.toLowerCase(Locale.ROOT));
+    }
+
+    private int nextHeaderIndex(String tail) {
+        if (tail == null) return -1;
+        // tìm header tiếp theo trong các header chuẩn
+        int a = indexOfIgnoreCase(tail, "Điểm mạnh:");
+        int b = indexOfIgnoreCase(tail, "Điểm yếu:");
+        int c = indexOfIgnoreCase(tail, "Gợi ý ôn tập:");
+        int min = Integer.MAX_VALUE;
+        for (int x : new int[]{a, b, c}) {
+            if (x >= 0) min = Math.min(min, x);
+        }
+        return min == Integer.MAX_VALUE ? -1 : min;
+    }
+
+    private String buildRuleBasedStrengthWeakness(
+            String userFullName,
+            List<Question> questions,
+            List<AnswerResult> results,
+            int scorePct
+    ) {
+        String name = (userFullName == null || userFullName.isBlank()) ? "bạn" : userFullName.trim();
+
+        Map<Long, AnswerResult> map = results == null ? Map.of() :
+                results.stream().filter(r -> r != null && r.questionId != null)
+                        .collect(Collectors.toMap(r -> r.questionId, r -> r, (x, y) -> y));
+
+        int correctMcq = 0, totalMcq = 0;
+        int weakEssay = 0, totalEssay = 0;
+
+        if (questions != null) {
+            for (Question q : questions) {
+                if (q == null) continue;
+                AnswerResult ar = map.get(q.getId());
+                if (q.getQuestionType() == QuestionType.MCQ) {
+                    totalMcq++;
+                    if (ar != null && ar.score != null && ar.maxScore != null && ar.maxScore > 0 && ar.score.equals(ar.maxScore)) {
+                        correctMcq++;
+                    }
+                } else if (q.getQuestionType() == QuestionType.ESSAY) {
+                    totalEssay++;
+                    int sc = ar == null || ar.score == null ? 0 : ar.score;
+                    int mx = ar == null || ar.maxScore == null ? 0 : ar.maxScore;
+                    // dưới 70% coi là yếu
+                    if (mx > 0 && sc < Math.ceil(mx * 0.7)) weakEssay++;
+                }
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("Chào ").append(name).append(",\n");
+        sb.append("Điểm mạnh:\n");
+        sb.append("- Bạn hoàn thành bài và đạt ").append(scorePct).append("/100.\n");
+        if (totalMcq > 0) {
+            sb.append("- Trắc nghiệm: đúng ").append(correctMcq).append("/").append(totalMcq).append(" câu.\n");
+        } else {
+            sb.append("- Bạn có một số ý trả lời đúng hướng theo học liệu.\n");
+        }
+
+        sb.append("\nĐiểm yếu:\n");
+        if (totalEssay > 0) {
+            sb.append("- Tự luận: có ").append(weakEssay).append("/").append(totalEssay).append(" câu cần củng cố (dưới 70% điểm câu).\n");
+            sb.append("- Cần bổ sung keywords và trình bày rõ ý (mỗi ý 1-2 câu, có ví dụ ngắn).\n");
+        } else {
+            sb.append("- Một số ý trọng tâm còn thiếu/nhầm ở các câu sai.\n");
+            sb.append("- Nên đọc lại phân tích trong “Xem lại đáp án” để hiểu vì sao sai.\n");
+        }
+
+        return sb.toString().trim();
+    }
+
+    private String minimalStudyGuide() {
+        return """
+Gợi ý ôn tập:
+Tiêu đề: Hướng dẫn ôn tập cá nhân hóa
+Môn học: Lập trình
+Chủ đề: Ôn theo câu sai
+Gợi ý ôn tập:
+- Mở “Xem lại đáp án”, ghi lại 3 lỗi sai lặp lại nhiều nhất.
+- Với mỗi lỗi, viết 1 quy tắc ngắn: “Nếu gặp dạng này, mình sẽ…”.
+- Làm lại (Retest) sau cooldown và so sánh kết quả.
+
+Các khái niệm chính:
+- Ôn theo câu sai và lý do sai
+
+Danh sách từ vựng:
+- Keyword, distractor, rubric, analysis
+
+Câu hỏi ôn tập:
+- Bạn sai nhiều nhất ở dạng câu nào? Vì sao?
+- Điều kiện nào khiến đáp án đúng trở thành đúng?
+- Bạn đã bỏ sót keyword nào trong câu tự luận?
+- Viết lại 1 ví dụ ngắn áp dụng đúng kiến thức.
+- Lần sau gặp lại dạng này, bạn sẽ kiểm tra điều gì đầu tiên?
+""".trim();
+    }
+
+    // =========================================================
+    // Bridge helpers for V2 guard reuse
+    // =========================================================
+    private long syntheticIdFromKey(String key) {
+        if (key == null) return 0L;
+        // stable + deterministic, avoid negative
+        return (key.hashCode() & 0x7fffffffL) + 1L;
+    }
+
+    private List<Question> buildQuestionsFromSession(PracticeSessionData session) {
+        if (session == null || session.questions == null) return List.of();
+        List<Question> qs = new ArrayList<>();
+        for (SessionQuestion sq : session.questions) {
+            if (sq == null || sq.item == null) continue;
+            Question q = new Question();
+            q.setId(syntheticIdFromKey(sq.key));
+            q.setQuestionType(sq.item.getQuestionType());
+            q.setContent(sq.item.getQuestion());
+            qs.add(q);
+        }
+        return qs;
+    }
+
+    private List<AnswerResult> buildResultsFromV2(PracticeSessionData session, List<AnswerResultV2> resultsV2) {
+        if (resultsV2 == null) return List.of();
+        List<AnswerResult> out = new ArrayList<>();
+        for (AnswerResultV2 r : resultsV2) {
+            if (r == null) continue;
+            AnswerResult ar = new AnswerResult();
+            ar.questionId = syntheticIdFromKey(r.questionKey);
+            ar.questionType = r.questionType;
+            ar.score = r.score == null ? 0 : r.score;
+            ar.maxScore = r.maxScore == null ? 0 : r.maxScore;
+            out.add(ar);
+        }
+        return out;
     }
 }
