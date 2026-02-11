@@ -63,7 +63,7 @@ public class ChatbotServiceImpl implements ChatbotService {
             // ✅ VN generic (hay làm relevance bị pass sai)
             "bang", "bằng", "may", "mấy", "bao", "nhiêu", "baonhieu",
             "cai", "cái", "nay", "này", "do", "đó", "noi", "nói", "ve", "về",
-            "cho", "giup", "giúp"
+            "cho", "giup", "giúp","mày","tao"
     );
 
     // ================= PUBLIC API =================
