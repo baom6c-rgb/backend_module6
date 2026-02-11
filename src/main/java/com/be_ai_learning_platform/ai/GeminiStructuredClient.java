@@ -62,7 +62,7 @@ public class GeminiStructuredClient {
                 "generationConfig", Map.of(
                         "temperature", temperature,
                         "topP", 0.1,
-                        "maxOutputTokens", 16384
+                        "maxOutputTokens", 24576
                 )
         );
 
