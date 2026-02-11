@@ -1,4 +1,4 @@
-package com.be_ai_learning_platform.ai;
+package com.be_ai_learning_platform.AI;
 
 import java.util.List;
 import java.util.Map;

@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.ai.GeminiResponsesClient;
+import com.be_ai_learning_platform.AI.GeminiResponsesClient;
 import com.be_ai_learning_platform.dto.request.PracticeGenerateRequest;
 import com.be_ai_learning_platform.dto.request.SubmitPracticeRequest;
 import com.be_ai_learning_platform.dto.response.GenerateQuestionsResponse;

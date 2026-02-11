@@ -2,11 +2,13 @@ package com.be_ai_learning_platform.controller;
 
 import com.be_ai_learning_platform.dto.request.*;
 import com.be_ai_learning_platform.dto.response.AuthResponse;
+import com.be_ai_learning_platform.dto.response.EmailOtpResponse;
 import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
 import com.be_ai_learning_platform.repository.UserRoleRepository;
 import com.be_ai_learning_platform.security.JwtUtil;
 import com.be_ai_learning_platform.service.AuthService;
+import com.be_ai_learning_platform.service.EmailOtpService;
 import com.be_ai_learning_platform.service.GoogleAuthService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -24,9 +26,22 @@ public class AuthController {
     private final AuthService authService;
     private final GoogleAuthService googleAuthService;
     private final JwtUtil jwtUtil;
+    private final EmailOtpService emailOtpService;
 
     // ✅ thêm
     private final UserRoleRepository userRoleRepository;
+
+    @PostMapping("/otp/request")
+    public ResponseEntity<EmailOtpResponse> requestEmailOtp(@Valid @RequestBody RequestEmailOtpRequest request) {
+        EmailOtpResponse res = emailOtpService.requestOtp(request.getEmail());
+        return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/otp/verify")
+    public ResponseEntity<?> verifyEmailOtp(@Valid @RequestBody VerifyEmailOtpRequest request) {
+        emailOtpService.verifyOtp(request.getOtpSessionId(), request.getEmail(), request.getOtp());
+        return ResponseEntity.ok("OTP verified");
+    }
 
     @PostMapping("/register")
     public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request) {

@@ -1,7 +1,7 @@
 // AdminAnalyticsAiInsightServiceImpl.java
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.ai.GeminiStructuredClient;
+import com.be_ai_learning_platform.AI.GeminiStructuredClient;
 import com.be_ai_learning_platform.dto.request.AdminAnalyticsFilterRequest;
 import com.be_ai_learning_platform.dto.response.AdminAnalyticsAiInsightResponse;
 import com.be_ai_learning_platform.dto.response.AtRiskStudentResponse;

@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.ai.GeminiResponsesClient;
+import com.be_ai_learning_platform.AI.GeminiResponsesClient;
 import com.be_ai_learning_platform.dto.response.ChatAskResponse;
 import com.be_ai_learning_platform.dto.response.ChatMessageResponse;
 import com.be_ai_learning_platform.dto.response.ChatSessionResponse;
@@ -63,7 +63,7 @@ public class ChatbotServiceImpl implements ChatbotService {
             // ✅ VN generic (hay làm relevance bị pass sai)
             "bang", "bằng", "may", "mấy", "bao", "nhiêu", "baonhieu",
             "cai", "cái", "nay", "này", "do", "đó", "noi", "nói", "ve", "về",
-            "cho", "giup", "giúp"
+            "cho", "giup", "giúp","mày","tao"
     );
 
     // ================= PUBLIC API =================

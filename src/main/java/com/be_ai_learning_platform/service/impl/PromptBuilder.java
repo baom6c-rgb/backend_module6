@@ -49,6 +49,15 @@ NHIỆM VỤ:
   - %d câu TỰ LUẬN NGẮN (ESSAY)
 - Trộn NGẪU NHIÊN thứ tự câu hỏi (MCQ + ESSAY xen kẽ).
 
+BẮT BUỘC VỀ DẠNG CÂU HỎI (CHỐNG TOÀN KHÁI NIỆM):
+- Ít nhất 40%% số câu MCQ phải thuộc nhóm “CODE/CONFIG/LOG/REQUEST-RESPONSE”:
+  1) Đọc đoạn code/config (ngắn) và hỏi: kết quả gì? bug gì? thiếu gì?
+  2) Điền chỗ trống ____ trong code/config: chọn A/B/C/D.
+  3) Chọn cấu hình đúng (VD: Spring MVC mapping, CORS, Security/JWT, Validation, JSON, v.v.)
+  4) Nhìn log/response và chọn nguyên nhân đúng nhất.
+- Không được quá 20%% tổng số câu hỏi là dạng “định nghĩa/khái niệm là gì” thuần túy.
+  Nếu hỏi khái niệm, BẮT BUỘC phải gắn tình huống hoặc đoạn code/config minh họa.
+
 NGUYÊN TẮC THIẾT KẾ CÂU HỎI:
 1) BÁM SÁT TÀI LIỆU: chỉ dùng thông tin có trong tài liệu.
 2) Ưu tiên dạng câu hỏi vận dụng:
@@ -71,6 +80,12 @@ PHẦN GIẢI THÍCH (analysis) CHO MCQ (BẮT BUỘC):
   - Vì sao từng phương án còn lại sai/chưa chính xác (A/B/C/D đều phải được nhắc đến)
 - Viết theo cấu trúc ngắn gọn, rõ ràng, dạng gạch đầu dòng càng tốt.
 
+BẮT BUỘC RIÊNG CHO ESSAY (KHÔNG ĐƯỢC THIẾU):
+- Mỗi câu ESSAY PHẢI có trường "keywords".
+- "keywords" là mảng 3–6 từ/cụm từ, KHÔNG được rỗng, KHÔNG chứa chuỗi trống.
+- Keywords phải bám sát nội dung câu hỏi và tài liệu, ưu tiên thuật ngữ kỹ thuật xuất hiện trong tài liệu.
+
+
 GIỚI HẠN ĐỘ DÀI (để tránh output quá dài):
 - MCQ: question <= %d ký tự; mỗi option <= %d ký tự; analysis <= %d ký tự
 - ESSAY: question <= %d ký tự; sampleAnswer <= %d ký tự; keywords 3-6 từ/cụm từ
@@ -78,6 +93,7 @@ GIỚI HẠN ĐỘ DÀI (để tránh output quá dài):
 YÊU CẦU OUTPUT:
 - Output phải là JSON HỢP LỆ theo schema bên dưới.
 - Không thêm bất kỳ nội dung/markdown nào ngoài JSON.
+- Nếu có ESSAY mà thiếu "keywords" hoặc keywords rỗng => coi như trả lời SAI, hãy tự sửa trước khi output.
 
 SCHEMA JSON (BẮT BUỘC):
 {
@@ -146,14 +162,35 @@ NHIỆM VỤ:
   - %d câu TỰ LUẬN NGẮN (ESSAY)
 - Trộn NGẪU NHIÊN thứ tự câu hỏi (MCQ + ESSAY xen kẽ).
 
+BẮT BUỘC VỀ DẠNG CÂU HỎI (CHỐNG TOÀN KHÁI NIỆM):
+- Ít nhất 40%% số câu MCQ phải thuộc nhóm “CODE/CONFIG/LOG/REQUEST-RESPONSE”:
+  1) Đọc đoạn code/config (ngắn) và hỏi: kết quả gì? bug gì? thiếu gì?
+  2) Điền chỗ trống ____ trong code/config: chọn A/B/C/D.
+  3) Chọn cấu hình đúng (VD: Spring MVC mapping, CORS, Security/JWT, Validation, JSON, v.v.)
+  4) Nhìn log/response và chọn nguyên nhân đúng nhất.
+- Không được quá 20%% tổng số câu hỏi là dạng “định nghĩa/khái niệm là gì” thuần túy.
+  Nếu hỏi khái niệm, BẮT BUỘC phải gắn tình huống hoặc đoạn code/config minh họa.
+
 WEAK AREAS (BẮT BUỘC bám sát):
 \"\"\"
 %s
 \"\"\"
 
+BẮT BUỘC RIÊNG CHO ESSAY (KHÔNG ĐƯỢC THIẾU):
+- Mỗi câu ESSAY PHẢI có trường "keywords".
+- "keywords" là mảng 3–6 từ/cụm từ, KHÔNG được rỗng, KHÔNG chứa chuỗi trống.
+- Keywords phải bám sát nội dung câu hỏi và tài liệu, ưu tiên thuật ngữ kỹ thuật xuất hiện trong tài liệu.
+
+
 GIỚI HẠN ĐỘ DÀI (để tránh output quá dài):
 - MCQ: question <= %d ký tự; mỗi option <= %d ký tự; analysis <= %d ký tự
 - ESSAY: question <= %d ký tự; sampleAnswer <= %d ký tự; keywords 3-6 từ/cụm từ
+
+YÊU CẦU OUTPUT:
+- Output phải là JSON HỢP LỆ theo schema bên dưới.
+- Không thêm bất kỳ nội dung/markdown nào ngoài JSON.
+- Nếu có ESSAY mà thiếu "keywords" hoặc keywords rỗng => coi như trả lời SAI, hãy tự sửa trước khi output.
+
 
 SCHEMA JSON (BẮT BUỘC):
 {
@@ -174,6 +211,9 @@ SCHEMA JSON (BẮT BUỘC):
     }
   ]
 }
+
+GHI CHÚ BẮT BUỘC:
+- Với ESSAY: "keywords" là REQUIRED, phải có 3-6 phần tử, không rỗng.
 
 TÀI LIỆU:
 \"\"\"

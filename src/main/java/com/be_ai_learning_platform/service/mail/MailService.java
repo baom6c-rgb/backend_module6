@@ -49,12 +49,19 @@ public class MailService {
         message.setTo(adminEmails);
         message.setSubject("📢 Học viên chờ duyệt");
 
+        message.setSubject("🔔 [Bumblefly AI] Yêu cầu phê duyệt tài khoản mới");
+
         message.setText(
-                "Có học viên mới cần duyệt:\n\n" +
-                        "👤 Họ tên: " + user.getFullName() + "\n" +
-                        "📧 Email: " + user.getEmail() + "\n\n" +
-                        "👉 Phê duyệt tại đây:\n" +
-                        approveLink
+                "Kính gửi Admin,\n\n" +
+                        "Hệ thống Bumblefly AI phát hiện một tài khoản mới cần được phê duyệt.\n\n" +
+                        "===== THÔNG TIN HỌC VIÊN =====\n" +
+                        "Họ tên : " + user.getFullName() + "\n" +
+                        "Email  : " + user.getEmail() + "\n\n" +
+                        "===== PHÊ DUYỆT =====\n" +
+                        "Truy cập đường dẫn sau để xử lý:\n" +
+                        approveLink + "\n\n" +
+                        "Đây là email tự động từ hệ thống Bumblefly AI.\n" +
+                        "Vui lòng không trả lời email này."
         );
 
         mailSender.send(message);
@@ -69,13 +76,19 @@ public class MailService {
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(fromEmail);
         message.setTo(user.getEmail());
-        message.setSubject("✅ Tài khoản đã được phê duyệt");
+        message.setSubject("🎉 [Bumblefly AI] Tài khoản của bạn đã được phê duyệt");
 
         message.setText(
                 "Xin chào " + user.getFullName() + ",\n\n" +
-                        "Tài khoản của bạn đã được phê duyệt.\n" +
-                        "Bạn có thể đăng nhập và học ngay.\n\n" +
-                        "— AI Learning Platform"
+                        "Chúc mừng! Tài khoản của bạn trên hệ thống Bumblefly AI đã được phê duyệt thành công.\n\n" +
+                        "Bạn có thể đăng nhập ngay để bắt đầu học tập, luyện tập và theo dõi tiến độ của mình.\n\n" +
+                        "👉 Truy cập hệ thống tại:\n" +
+                        "https://your-domain.com\n\n" +
+                        "Chúc bạn học tập hiệu quả!\n\n" +
+                        "Trân trọng,\n" +
+                        "Bumblefly AI\n\n" +
+                        "———\n" +
+                        "Đây là email tự động. Vui lòng không trả lời email này."
         );
 
         mailSender.send(message);
@@ -86,17 +99,48 @@ public class MailService {
         SimpleMailMessage message = new SimpleMailMessage();
         message.setFrom(fromEmail);
         message.setTo(email);
-        message.setSubject("🔑 Đặt lại mật khẩu");
+        message.setSubject("🔑 [Bumblefly AI] Yêu cầu đặt lại mật khẩu");
 
         message.setText(
-                "Click link sau để đặt lại mật khẩu (15 phút):\n" +
-                        resetLink
+                "Xin chào,\n\n" +
+                        "Chúng tôi đã nhận được yêu cầu đặt lại mật khẩu cho tài khoản của bạn trên hệ thống Bumblefly AI.\n\n" +
+                        "👉 Nhấn vào liên kết bên dưới để đặt lại mật khẩu (liên kết có hiệu lực trong 15 phút):\n" +
+                        resetLink + "\n\n" +
+                        "Nếu bạn không thực hiện yêu cầu này, vui lòng bỏ qua email này. " +
+                        "Mật khẩu của bạn sẽ không thay đổi.\n\n" +
+                        "Trân trọng,\n" +
+                        "Đội ngũ Bumblefly AI\n\n" +
+                        "———\n" +
+                        "Đây là email tự động. Vui lòng không trả lời email này."
         );
 
         mailSender.send(message);
     }
 
-    // ===================== US21: Monthly report mail =====================
+
+    // ===================== OTP register mail =====================
+
+    public void sendRegisterOtp(String email, String otp, int expireSeconds) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(email);
+        message.setSubject("🔐 [Bumblefly AI] Mã xác thực đăng ký");
+
+        message.setText(
+                "Xin chào,\n\n" +
+                        "Mã OTP xác thực đăng ký của bạn là: " + otp + "\n\n" +
+                        "Mã có hiệu lực trong " + (expireSeconds / 60) + " phút.\n\n" +
+                        "Nếu bạn không yêu cầu đăng ký, vui lòng bỏ qua email này.\n\n" +
+                        "Trân trọng,\n" +
+                        "Bumblefly AI\n\n" +
+                        "———\n" +
+                        "Đây là email tự động. Vui lòng không trả lời email này."
+        );
+
+        mailSender.send(message);
+    }
+
+// ===================== US21: Monthly report mail =====================
 
     /**
      * Gửi email báo cáo tháng cho admin:

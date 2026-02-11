@@ -1,4 +1,4 @@
-package com.be_ai_learning_platform.ai;
+package com.be_ai_learning_platform.AI;
 
 import com.be_ai_learning_platform.service.SystemSettingsService;
 import org.springframework.http.HttpStatus;
@@ -62,7 +62,7 @@ public class GeminiStructuredClient {
                 "generationConfig", Map.of(
                         "temperature", temperature,
                         "topP", 0.1,
-                        "maxOutputTokens", 16384
+                        "maxOutputTokens", 24576
                 )
         );
 
