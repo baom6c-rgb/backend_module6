@@ -9,6 +9,7 @@ import com.be_ai_learning_platform.entity.enums.RegisterMethod;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
 import com.be_ai_learning_platform.repository.*;
 import com.be_ai_learning_platform.service.AuthService;
+import com.be_ai_learning_platform.service.EmailOtpService;
 import com.be_ai_learning_platform.service.mail.MailService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -30,6 +31,7 @@ public class AuthServiceImpl implements AuthService {
     private final UserRoleRepository userRoleRepository;
     private final PasswordEncoder passwordEncoder;
     private final MailService mailService;
+    private final EmailOtpService emailOtpService;
 
     // ======================= REGISTER (FORM) =======================
     @Override
@@ -38,6 +40,14 @@ public class AuthServiceImpl implements AuthService {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new RuntimeException("Email already exists");
         }
+
+
+        // ✅ Require OTP verification before creating user (anti-spam)
+        emailOtpService.verifyAndConsumeForRegister(
+                request.getOtpSessionId(),
+                request.getEmail(),
+                request.getOtp()
+        );
 
         ClassEntity clazz = classRepository.findById(request.getClassId())
                 .orElseThrow(() -> new RuntimeException("Class not found"));

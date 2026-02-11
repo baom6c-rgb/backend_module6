@@ -117,7 +117,30 @@ public class MailService {
         mailSender.send(message);
     }
 
-    // ===================== US21: Monthly report mail =====================
+
+    // ===================== OTP register mail =====================
+
+    public void sendRegisterOtp(String email, String otp, int expireSeconds) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(email);
+        message.setSubject("🔐 [Bumblefly AI] Mã xác thực đăng ký");
+
+        message.setText(
+                "Xin chào,\n\n" +
+                        "Mã OTP xác thực đăng ký của bạn là: " + otp + "\n\n" +
+                        "Mã có hiệu lực trong " + (expireSeconds / 60) + " phút.\n\n" +
+                        "Nếu bạn không yêu cầu đăng ký, vui lòng bỏ qua email này.\n\n" +
+                        "Trân trọng,\n" +
+                        "Bumblefly AI\n\n" +
+                        "———\n" +
+                        "Đây là email tự động. Vui lòng không trả lời email này."
+        );
+
+        mailSender.send(message);
+    }
+
+// ===================== US21: Monthly report mail =====================
 
     /**
      * Gửi email báo cáo tháng cho admin:
