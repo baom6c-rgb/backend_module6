@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.ai.GeminiStructuredClient;
+import com.be_ai_learning_platform.AI.GeminiStructuredClient;
 import com.be_ai_learning_platform.dto.request.AdminAnalyticsFilterRequest;
 import com.be_ai_learning_platform.dto.response.AdminAnalyticsAiInsightResponse;
 import com.be_ai_learning_platform.dto.response.AdminAnalyticsOverviewResponse;
@@ -17,7 +17,6 @@ import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
