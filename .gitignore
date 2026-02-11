@@ -1,7 +1,7 @@
 ### ENV / SECRETS ###
 .env
 *.env
-
+data/secrets/
 HELP.md
 .gradle
 build/

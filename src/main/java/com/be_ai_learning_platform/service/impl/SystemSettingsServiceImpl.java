@@ -6,6 +6,7 @@ import com.be_ai_learning_platform.dto.response.AiSettingsResponse;
 import com.be_ai_learning_platform.dto.response.SystemSettingsResponse;
 import com.be_ai_learning_platform.entity.SystemSettings;
 import com.be_ai_learning_platform.repository.SystemSettingsRepository;
+import com.be_ai_learning_platform.security.secret.SecretStore;
 import com.be_ai_learning_platform.service.SystemSettingsService;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +28,9 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     private static final Long SETTINGS_ID = 1L;
 
     private final SystemSettingsRepository repo;
+
+    // ✅ NEW: secret store (file encrypted + hot cache)
+    private final SecretStore secretStore;
 
     // ===== DEFAULT (chỉ dùng để INIT lần đầu) =====
     @Value("${app.settings.default.passScore:80}")
@@ -85,14 +89,18 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
 
     /**
      * Có thể set từ ENV để init lần đầu (không bắt buộc).
-     * Sau đó admin có thể đổi trong DB mà không cần restart.
+     * ✅ NEW: bây giờ sẽ init vào SecretStore (file), không lưu DB nữa.
      */
     @Value("${app.settings.default.ai.apiKey:}")
     private String defaultAiApiKey;
 
     @PostConstruct
     public void initIfMissing() {
-        if (repo.existsById(SETTINGS_ID)) return;
+        if (repo.existsById(SETTINGS_ID)) {
+            // even if settings row exists, we can still seed secret store once (optional)
+            seedAiKeyToSecretStoreIfProvided();
+            return;
+        }
 
         SystemSettings s = new SystemSettings();
         s.setId(SETTINGS_ID);
@@ -143,10 +151,30 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         s.setAiModel(normalizeModel(defaultAiModel));
         s.setAiTemperature(clamp01(defaultAiTemperature));
         s.setAiEnabled(defaultAiEnabled);
-        s.setAiApiKey(normalizeOptionalSecret(defaultAiApiKey));
+
+        // ✅ IMPORTANT: do NOT save api key in DB anymore
+        // s.setAiApiKey(normalizeOptionalSecret(defaultAiApiKey));  // removed
 
         s.setUpdatedAt(LocalDateTime.now());
         repo.save(s);
+
+        // ✅ seed api key to SecretStore if provided via ENV/property
+        seedAiKeyToSecretStoreIfProvided();
+    }
+
+    private void seedAiKeyToSecretStoreIfProvided() {
+        try {
+            String k = normalizeOptionalSecret(defaultAiApiKey);
+            if (k == null) return;
+
+            // only seed if secret store currently has no key
+            String masked = secretStore.maskAiApiKey();
+            if (masked == null || masked.isBlank()) {
+                secretStore.writeAiApiKey(k);
+            }
+        } catch (Exception ignored) {
+            // don't block app start
+        }
     }
 
     @Override
@@ -343,10 +371,10 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         s.setAiTemperature(clamp01(temp));
         s.setAiEnabled(Boolean.TRUE.equals(enabled));
 
-        // ✅ only update key if admin enters a new key
+        // ✅ NEW: update key in SecretStore only (hot), never write to DB
         String newKey = normalizeOptionalSecret(req.aiApiKey());
         if (newKey != null) {
-            s.setAiApiKey(newKey);
+            secretStore.writeAiApiKey(newKey);
         }
 
         s.setUpdatedAt(LocalDateTime.now());
@@ -364,11 +392,8 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         if (!Boolean.TRUE.equals(s.getAiEnabled())) {
             throw new IllegalStateException("AI is disabled by admin");
         }
-        String key = s.getAiApiKey();
-        if (key == null || key.isBlank()) {
-            throw new IllegalStateException("AI api key is empty");
-        }
-        return key.trim();
+        // ✅ NEW: read from SecretStore (hot, not DB)
+        return secretStore.requireAiApiKey();
     }
 
     @Override
@@ -424,8 +449,8 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     }
 
     /**
-     * ✅ FIX: AiSettingsResponse là POJO (no-args) => set fields bằng setter.
-     * - Không trả full secret. Chỉ trả masked key.
+     * ✅ Keep contract: masked key for UI, never expose full secret.
+     * ✅ NEW: mask from SecretStore (not DB).
      */
     private AiSettingsResponse toAiResponse(SystemSettings s) {
         AiSettingsResponse r = new AiSettingsResponse();
@@ -435,7 +460,7 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         r.setAiTemperature(s.getAiTemperature() == null ? 0.0 : clamp01(s.getAiTemperature()));
         r.setAiEnabled(Boolean.TRUE.equals(s.getAiEnabled()));
 
-        r.setAiApiKeyMasked(maskApiKey(s.getAiApiKey()));
+        r.setAiApiKeyMasked(secretStore.maskAiApiKey());
         r.setUpdatedAt(s.getUpdatedAt());
 
         return r;
@@ -472,14 +497,5 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         if (s == null) return null;
         String t = s.trim();
         return t.isBlank() ? null : t;
-    }
-
-    private String maskApiKey(String key) {
-        if (key == null || key.isBlank()) return null;
-
-        String k = key.trim();
-        if (k.length() <= 6) return "***";
-
-        return k.substring(0, 3) + "****" + k.substring(k.length() - 3);
     }
 }
