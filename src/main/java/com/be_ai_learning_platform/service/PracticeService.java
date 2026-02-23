@@ -16,6 +16,13 @@ public interface PracticeService {
     // V2 (no preview, no DB until submit)
     // =========================
     GeneratePracticeSessionResponse generateSessionV2(String email, GeneratePracticeSessionRequest req);
+
+    /**
+     * V2 topic selection: when material contains multiple lessons/topics,
+     * BE asks user to pick one topicId and then generates a focused session.
+     */
+    GeneratePracticeSessionResponse selectTopicAndGenerateSessionV2(String email, SelectTopicRequest req);
+
     StartPracticeSessionResponse startSessionV2(String email, StartPracticeSessionRequest req);
     StartPracticeSessionResponse getSessionV2(String email, String sessionToken);
     SubmitPracticeV2Response submitSessionV2(String email, String sessionToken, SubmitPracticeSessionRequest req);

@@ -80,6 +80,18 @@ public class PracticeController {
     }
 
     /**
+     * V2/Step 1b: Nếu /v2/generate trả status=NEED_TOPIC,
+     * FE gọi endpoint này để chọn 1 topic và tạo session tập trung.
+     */
+    @PostMapping("/v2/select-topic")
+    public GeneratePracticeSessionResponse selectTopicAndGenerateSessionV2(
+            Authentication authentication,
+            @Valid @RequestBody SelectTopicRequest req
+    ) {
+        return practiceService.selectTopicAndGenerateSessionV2(authentication.getName(), req);
+    }
+
+    /**
      * V2/Step 2: Start -> trả danh sách câu hỏi (không có đáp án đúng).
      */
     @PostMapping("/v2/start")
