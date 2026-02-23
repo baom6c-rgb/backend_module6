@@ -15,32 +15,29 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.*;
+import java.util.regex.Pattern;
 
 @Service
 public class TopicSelectionServiceImpl implements TopicSelectionService {
 
-    /**
-     * If extracted text is short enough, assume user sent ONE lesson/topic.
-     * Still can be multi, but this reduces unnecessary AI calls.
-     */
     private static final int SMALL_TEXT_ASSUME_SINGLE_CHARS = 1200;
-
-    /**
-     * For topic detection prompt, we don't need the whole document.
-     * Keep it consistent with question generation.
-     */
     private static final int MAX_DETECT_CHARS = 6000;
-
-    /**
-     * store focusText server-side; FE only needs title/summary.
-     */
     private static final int MAX_FOCUS_TEXT_CHARS = 2500;
 
-    /**
-     * If we can confidently detect multiple sub-topics by heuristic,
-     * we avoid an AI call and immediately ask user to choose.
-     */
-    private static final int HEURISTIC_EXCERPT_WINDOW_CHARS = 1400;
+    // Objective bullets
+    private static final int BULLET_SECTION_SCAN_LIMIT = 5000;
+    private static final int MIN_OBJECTIVE_BULLETS_TO_TRIGGER = 4;
+    private static final int MAX_OBJECTIVE_OPTIONS = 12;
+    private static final int MAX_BULLET_LINE_LEN = 240;
+
+    // Section headings
+    private static final int MAX_HEADING_LINES_SCAN = 600;
+    private static final int MAX_SECTIONS = 10;
+    private static final int MAX_SECTION_LINES = 140;
+
+    private static final Pattern BULLET_LINE = Pattern.compile(
+            "^\\s*(?:[•\\-*–—]|\\d+\\.|\\(?[a-zA-Z]\\)|\\(?[ivxIVX]+\\)|\\([0-9]+\\))\\s+.+$"
+    );
 
     private final UserRepository userRepo;
     private final LearningMaterialRepository materialRepo;
@@ -79,27 +76,17 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Extracted text is empty");
         }
 
-        // 0) Strong heuristic for common “one lesson contains multiple sub-parts” cases
-        // Example: Vòng lặp -> for / while / do-while
-        HeuristicDetect hd = detectSubtopicsByHeuristic(extracted);
-        if (hd != null && hd.options.size() >= 2) {
-            String selectionToken = UUID.randomUUID().toString();
-
-            TopicSelectionCacheData cacheData = new TopicSelectionCacheData();
-            cacheData.userEmail = currentEmail;
-            cacheData.materialId = materialId;
-            cacheData.focusByTopicId = hd.focusById;
-
-            practiceSessionCache.put(selectionKey(currentEmail, selectionToken), cacheData);
-
-            TopicSelectionResult out = new TopicSelectionResult();
-            out.isMulti = true;
-            out.selectionToken = selectionToken;
-            out.topics = hd.options;
-            return out;
+        // =========================================================
+        // RULE 1: Objectives/outcomes bullets => choose 1 bullet
+        // =========================================================
+        HeuristicDetect obj = detectObjectiveBullets(extracted);
+        if (obj != null && obj.options.size() >= 2) {
+            return cacheAndReturnMulti(currentEmail, materialId, obj);
         }
 
-        // 1) quick heuristic
+        // =========================================================
+        // RULE 2: Small file => generate directly
+        // =========================================================
         if (extracted.length() <= SMALL_TEXT_ASSUME_SINGLE_CHARS && !looksLikeMultiLesson(extracted)) {
             TopicSelectionResult r = new TopicSelectionResult();
             r.isMulti = false;
@@ -108,7 +95,20 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
             return r;
         }
 
-        String trimmed = extracted.length() > MAX_DETECT_CHARS ? extracted.substring(0, MAX_DETECT_CHARS) : extracted;
+        // =========================================================
+        // RULE 3: Big file => split by headings/sections (generic)
+        // =========================================================
+        HeuristicDetect sec = detectSectionsByHeadings(extracted);
+        if (sec != null && sec.options.size() >= 2) {
+            return cacheAndReturnMulti(currentEmail, materialId, sec);
+        }
+
+        // =========================================================
+        // RULE 4: fallback AI split 2..8 parts
+        // =========================================================
+        String trimmed = extracted.length() > MAX_DETECT_CHARS
+                ? extracted.substring(0, MAX_DETECT_CHARS)
+                : extracted;
 
         String prompt = buildDetectPrompt(trimmed);
         String contract = detectJsonContract();
@@ -118,7 +118,6 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
         try {
             dr = om.readValue(json, DetectResult.class);
         } catch (Exception e) {
-            // If AI returns invalid JSON, fall back to heuristic (safe default: single)
             TopicSelectionResult r = new TopicSelectionResult();
             r.isMulti = looksLikeMultiLesson(trimmed);
             r.topics = List.of();
@@ -129,58 +128,68 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
         List<DetectTopic> topics = (dr == null || dr.topics == null) ? List.of() : dr.topics;
         boolean multi = Boolean.TRUE.equals(dr.isMulti) && topics.size() >= 2;
 
-        TopicSelectionResult out = new TopicSelectionResult();
-        out.isMulti = multi;
-
         if (!multi) {
-            out.topics = List.of();
-            out.selectionToken = null;
-            return out;
+            TopicSelectionResult r = new TopicSelectionResult();
+            r.isMulti = false;
+            r.topics = List.of();
+            r.selectionToken = null;
+            return r;
         }
 
-        String selectionToken = UUID.randomUUID().toString();
         List<TopicOptionResponse> options = new ArrayList<>();
-        Map<String, String> focusById = new HashMap<>();
+        Map<String, String> focusById = new LinkedHashMap<>();
 
         int idx = 1;
         for (DetectTopic t : topics) {
             if (t == null) continue;
+
             String id = safeId(t.id);
             if (id.isBlank()) id = "T" + (idx++);
 
             TopicOptionResponse opt = new TopicOptionResponse();
             opt.setId(id);
-            opt.setTitle(safeTrim(t.title, 120));
-            opt.setSummary(safeTrim(t.summary, 240));
+            opt.setTitle(safeTrim(t.title, 160));
+            opt.setSummary(safeTrim(t.summary, 260));
             opt.setKeywords(t.keywords == null ? List.of() : trimList(t.keywords, 8, 40));
             options.add(opt);
 
             String focus = safeTrim(t.focusText, MAX_FOCUS_TEXT_CHARS);
             if (focus.isBlank()) {
-                // fallback: use title+summary if AI forgot focusText
                 focus = (opt.getTitle() + "\n" + opt.getSummary()).trim();
             }
             focusById.put(id, focus);
         }
 
+        options = dedupeById(options);
         if (options.size() < 2) {
-            // Not enough options -> treat as single
-            out.isMulti = false;
-            out.topics = List.of();
-            out.selectionToken = null;
-            return out;
+            TopicSelectionResult r = new TopicSelectionResult();
+            r.isMulti = false;
+            r.topics = List.of();
+            r.selectionToken = null;
+            return r;
         }
 
-        // store in cache
+        HeuristicDetect fromAi = new HeuristicDetect();
+        fromAi.options = options;
+        fromAi.focusById = focusById;
+
+        return cacheAndReturnMulti(currentEmail, materialId, fromAi);
+    }
+
+    private TopicSelectionResult cacheAndReturnMulti(String currentEmail, Long materialId, HeuristicDetect hd) {
+        String selectionToken = UUID.randomUUID().toString();
+
         TopicSelectionCacheData cacheData = new TopicSelectionCacheData();
         cacheData.userEmail = currentEmail;
         cacheData.materialId = materialId;
-        cacheData.focusByTopicId = focusById;
+        cacheData.focusByTopicId = hd.focusById;
 
         practiceSessionCache.put(selectionKey(currentEmail, selectionToken), cacheData);
 
+        TopicSelectionResult out = new TopicSelectionResult();
+        out.isMulti = true;
         out.selectionToken = selectionToken;
-        out.topics = options;
+        out.topics = hd.options;
         return out;
     }
 
@@ -223,16 +232,259 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
         return data.materialId;
     }
 
-    // ===== helpers =====
-
+    // ===== keys =====
     private String selectionKey(String email, String token) {
         return "topicSel:" + email + ":" + token;
     }
 
+    // =========================================================
+    // Generic: objective/outcome bullets (all topics)
+    // =========================================================
+    private HeuristicDetect detectObjectiveBullets(String extracted) {
+        String scan = extracted.length() > BULLET_SECTION_SCAN_LIMIT
+                ? extracted.substring(0, BULLET_SECTION_SCAN_LIMIT)
+                : extracted;
+
+        String[] lines = scan.split("\\r?\\n");
+
+        int headingLine = findObjectiveHeadingLine(lines);
+        if (headingLine < 0) return null;
+
+        List<String> bullets = collectBulletsAfterHeading(lines, headingLine);
+        bullets = dedupeStrings(bullets);
+
+        if (bullets.size() < MIN_OBJECTIVE_BULLETS_TO_TRIGGER) return null;
+
+        List<TopicOptionResponse> options = new ArrayList<>();
+        Map<String, String> focusById = new LinkedHashMap<>();
+
+        int i = 1;
+        for (String b : bullets) {
+            if (options.size() >= MAX_OBJECTIVE_OPTIONS) break;
+
+            String id = "OBJ_" + i++;
+            String title = safeTrim(b, 180);
+
+            TopicOptionResponse opt = new TopicOptionResponse();
+            opt.setId(id);
+            opt.setTitle(title);
+            opt.setSummary("Chọn 1 mục tiêu để tạo đề tập trung đúng yêu cầu bạn muốn luyện.");
+            opt.setKeywords(extractKeywordsLight(title));
+            options.add(opt);
+
+            focusById.put(id, safeTrim("Mục tiêu cần đạt: " + title, MAX_FOCUS_TEXT_CHARS));
+        }
+
+        options = dedupeById(options);
+        if (options.size() < 2) return null;
+
+        HeuristicDetect out = new HeuristicDetect();
+        out.options = options;
+        out.focusById = focusById;
+        return out;
+    }
+
+    private int findObjectiveHeadingLine(String[] lines) {
+        if (lines == null || lines.length == 0) return -1;
+
+        List<String> keys = List.of(
+                "mục tiêu", "muc tieu",
+                "mục đích", "muc dich",
+                "kết quả", "ket qua",
+                "đầu ra", "dau ra",
+                "chuẩn đầu ra", "chuan dau ra",
+                "objectives", "objective",
+                "learning outcomes", "outcomes",
+                "goals", "goal",
+                "yêu cầu", "yeu cau"
+        );
+
+        for (int i = 0; i < Math.min(lines.length, 80); i++) {
+            String raw = lines[i] == null ? "" : lines[i].trim();
+            if (raw.isBlank()) continue;
+            if (raw.length() > 90) continue;
+            if (BULLET_LINE.matcher(raw).matches()) continue;
+
+            String lower = raw.toLowerCase(Locale.ROOT);
+            for (String k : keys) {
+                if (lower.contains(k)) return i;
+            }
+        }
+        return -1;
+    }
+
+    private List<String> collectBulletsAfterHeading(String[] lines, int headingLine) {
+        List<String> out = new ArrayList<>();
+        int blankCount = 0;
+
+        for (int i = headingLine + 1; i < Math.min(lines.length, headingLine + 80); i++) {
+            String raw = lines[i] == null ? "" : lines[i].trim();
+
+            if (raw.isBlank()) {
+                blankCount++;
+                if (blankCount >= 2 && out.size() >= 2) break;
+                continue;
+            }
+            blankCount = 0;
+
+            // stop at next heading-like line
+            if (!BULLET_LINE.matcher(raw).matches()) {
+                if (looksLikeHeading(raw)) break;
+                continue;
+            }
+
+            if (raw.length() > MAX_BULLET_LINE_LEN) continue;
+
+            String cleaned = stripBulletPrefix(raw).replaceAll("\\s+", " ").trim();
+            if (cleaned.length() < 8) continue;
+
+            out.add(cleaned);
+        }
+
+        return out;
+    }
+
+    private String stripBulletPrefix(String line) {
+        if (line == null) return "";
+        String t = line.trim();
+        t = t.replaceFirst("^\\s*[•\\-*–—]\\s+", "");
+        t = t.replaceFirst("^\\s*\\d+\\.\\s+", "");
+        t = t.replaceFirst("^\\s*\\([0-9]+\\)\\s+", "");
+        t = t.replaceFirst("^\\s*\\(?[a-zA-Z]\\)\\s+", "");
+        t = t.replaceFirst("^\\s*\\(?[ivxIVX]+\\)\\s+", "");
+        return t.trim();
+    }
+
+    private List<String> dedupeStrings(List<String> in) {
+        if (in == null || in.isEmpty()) return List.of();
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        for (String s : in) {
+            if (s == null) continue;
+            String t = s.trim();
+            if (!t.isBlank()) set.add(t);
+        }
+        return new ArrayList<>(set);
+    }
+
+    private List<String> extractKeywordsLight(String text) {
+        if (text == null || text.isBlank()) return List.of();
+        String lower = text.toLowerCase(Locale.ROOT);
+        String[] parts = lower.replaceAll("[^\\p{L}\\p{N}\\s/\\-]", " ").split("\\s+");
+
+        List<String> out = new ArrayList<>();
+        for (String p : parts) {
+            String w = p == null ? "" : p.trim();
+            if (w.length() < 3) continue;
+            if (Set.of("và","hoặc","của","các","một","những","được","the","and","or","to","of","for","with").contains(w)) {
+                continue;
+            }
+            out.add(w);
+            if (out.size() >= 6) break;
+        }
+        return out;
+    }
+
+    // =========================================================
+    // Generic: split big file into sections by headings
+    // =========================================================
+    private HeuristicDetect detectSectionsByHeadings(String extracted) {
+        if (extracted == null || extracted.isBlank()) return null;
+
+        String[] lines = extracted.split("\\r?\\n");
+        List<Integer> headingIdx = new ArrayList<>();
+
+        for (int i = 0; i < Math.min(lines.length, MAX_HEADING_LINES_SCAN); i++) {
+            String raw = lines[i] == null ? "" : lines[i].trim();
+            if (raw.isBlank()) continue;
+
+            if (looksLikeHeading(raw)) {
+                headingIdx.add(i);
+                if (headingIdx.size() >= MAX_SECTIONS) break;
+            }
+        }
+
+        if (headingIdx.size() < 2) return null;
+
+        List<TopicOptionResponse> options = new ArrayList<>();
+        Map<String, String> focusById = new LinkedHashMap<>();
+
+        for (int k = 0; k < headingIdx.size(); k++) {
+            int start = headingIdx.get(k);
+            int end = (k + 1 < headingIdx.size())
+                    ? headingIdx.get(k + 1)
+                    : Math.min(lines.length, start + MAX_SECTION_LINES);
+
+            String title = safeTrim(lines[start] == null ? "" : lines[start].trim(), 180);
+            if (title.isBlank()) title = "Phần " + (k + 1);
+
+            String focus = buildFocusFromLines(lines, start, end);
+
+            String id = "SEC_" + (k + 1);
+
+            TopicOptionResponse opt = new TopicOptionResponse();
+            opt.setId(id);
+            opt.setTitle(title);
+            opt.setSummary("Chọn phần này để tạo đề tập trung đúng nội dung.");
+            opt.setKeywords(extractKeywordsLight(title));
+            options.add(opt);
+
+            focusById.put(id, focus);
+        }
+
+        options = dedupeById(options);
+        if (options.size() < 2) return null;
+
+        HeuristicDetect out = new HeuristicDetect();
+        out.options = options;
+        out.focusById = focusById;
+        return out;
+    }
+
+    private boolean looksLikeHeading(String raw) {
+        String s = raw == null ? "" : raw.trim();
+        if (s.isBlank()) return false;
+
+        // markdown headings
+        if (s.startsWith("#")) return true;
+
+        String lower = s.toLowerCase(Locale.ROOT);
+
+        // common VN/EN headings
+        if (lower.startsWith("chương ") || lower.startsWith("bài ")
+                || lower.startsWith("chapter ") || lower.startsWith("lesson ")
+                || lower.startsWith("phần ") || lower.startsWith("mục ")
+                || lower.startsWith("section ") || lower.startsWith("unit ")) {
+            return true;
+        }
+
+        // numbering headings
+        if (s.matches("^(\\d+\\.)\\s+.+$")) return true;          // 1. ...
+        if (s.matches("^(\\d+\\.\\d+)\\s*.+$")) return true;      // 1.1 ...
+        if (s.matches("^([IVX]+\\.)\\s+.+$")) return true;        // I. ...
+
+        // very short all-caps line is often a heading
+        if (s.length() <= 60 && s.equals(s.toUpperCase(Locale.ROOT)) && s.matches(".*[A-Z].*")) return true;
+
+        return false;
+    }
+
+    private String buildFocusFromLines(String[] lines, int start, int end) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < end; i++) {
+            String s = lines[i] == null ? "" : lines[i].trim();
+            if (s.isBlank()) continue;
+            sb.append(s).append("\n");
+            if (sb.length() >= MAX_FOCUS_TEXT_CHARS) break;
+        }
+        return safeTrim(sb.toString(), MAX_FOCUS_TEXT_CHARS);
+    }
+
+    // =========================================================
+    // Multi-lesson rough indicator (used only for fallback)
+    // =========================================================
     private boolean looksLikeMultiLesson(String text) {
         if (text == null) return false;
         String t = text;
-        // headings / chapters / lessons
         int hits = 0;
         String[] markers = new String[]{
                 "Chương ", "Bài ", "Lesson ", "Chapter ",
@@ -252,171 +504,17 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
         return false;
     }
 
-    /**
-     * Heuristic detector for common “one lesson contains multiple sub-parts”.
-     * Current focus: loops (for / while / do-while / foreach) because this is a high-frequency case
-     * and users often paste a whole "Vòng lặp" lesson.
-     *
-     * If we detect >= 2 loop types, we return NEED_TOPIC immediately (no AI call).
-     */
-    private HeuristicDetect detectSubtopicsByHeuristic(String extracted) {
-        if (extracted == null || extracted.isBlank()) return null;
-
-        String lower = extracted.toLowerCase(Locale.ROOT);
-
-        boolean hasFor = lower.contains("for(") || lower.contains("for (");
-        boolean hasWhile = lower.contains("while(") || lower.contains("while (");
-        boolean hasDoWhile = lower.contains("do-while") || looksLikeDoWhile(lower);
-        boolean hasForeach = lower.contains("foreach") || lower.contains("for-each") || lower.contains("enhanced for") || lower.contains("for each");
-
-        int count = 0;
-        if (hasFor) count++;
-        if (hasWhile) count++;
-        if (hasDoWhile) count++;
-        if (hasForeach) count++;
-
-        if (count < 2) return null;
-
-        List<TopicOptionResponse> options = new ArrayList<>();
-        Map<String, String> focusById = new HashMap<>();
-
-        if (hasFor) {
-            addHeuristicTopic(options, focusById,
-                    "LOOP_FOR",
-                    "Vòng lặp for",
-                    "Dùng khi biết trước số lần lặp; thường có biến đếm và điều kiện dừng.",
-                    List.of("for", "counter", "iteration"),
-                    extracted,
-                    firstIndexOfAny(lower, List.of("for(", "for (")));
-        }
-        if (hasWhile) {
-            addHeuristicTopic(options, focusById,
-                    "LOOP_WHILE",
-                    "Vòng lặp while",
-                    "Dùng khi chưa biết trước số lần lặp; lặp khi điều kiện còn đúng.",
-                    List.of("while", "condition"),
-                    extracted,
-                    firstIndexOfAny(lower, List.of("while(", "while (")));
-        }
-        if (hasDoWhile) {
-            addHeuristicTopic(options, focusById,
-                    "LOOP_DO_WHILE",
-                    "Vòng lặp do-while",
-                    "Luôn chạy ít nhất 1 lần rồi mới kiểm tra điều kiện để lặp tiếp.",
-                    List.of("do-while", "do", "while"),
-                    extracted,
-                    firstIndexOfAny(lower, List.of("do-while", "do{", "do {", "do\n", "do\r\n")));
-        }
-        if (hasForeach) {
-            addHeuristicTopic(options, focusById,
-                    "LOOP_FOREACH",
-                    "Vòng lặp foreach (enhanced for)",
-                    "Duyệt qua phần tử của mảng/collection; tránh thao tác chỉ số thủ công.",
-                    List.of("foreach", "enhanced for", "collection"),
-                    extracted,
-                    firstIndexOfAny(lower, List.of("foreach", "for-each", "enhanced for", "for each")));
-        }
-
-        options = dedupeById(options);
-        if (options.size() < 2) return null;
-
-        HeuristicDetect out = new HeuristicDetect();
-        out.options = options;
-        out.focusById = focusById;
-        return out;
-    }
-
-    private boolean looksLikeDoWhile(String lower) {
-        // Detect "do { ... } while (...)" patterns (rough, but stable and cheap)
-        int doIdx = lower.indexOf("do");
-        while (doIdx >= 0) {
-            int whileIdx = lower.indexOf("while", doIdx);
-            if (whileIdx > doIdx && (whileIdx - doIdx) <= 300) {
-                return true;
-            }
-            doIdx = lower.indexOf("do", doIdx + 2);
-        }
-        return false;
-    }
-
-    private int firstIndexOfAny(String lower, List<String> needles) {
-        int best = -1;
-        for (String n : needles) {
-            if (n == null || n.isBlank()) continue;
-            int idx = lower.indexOf(n);
-            if (idx >= 0 && (best < 0 || idx < best)) best = idx;
-        }
-        return best;
-    }
-
-    private void addHeuristicTopic(
-            List<TopicOptionResponse> options,
-            Map<String, String> focusById,
-            String id,
-            String title,
-            String summary,
-            List<String> keywords,
-            String originalText,
-            int hitIndex
-    ) {
-        TopicOptionResponse opt = new TopicOptionResponse();
-        opt.setId(id);
-        opt.setTitle(title);
-        opt.setSummary(summary);
-        opt.setKeywords(keywords);
-        options.add(opt);
-
-        String focus = extractExcerpt(originalText, hitIndex, HEURISTIC_EXCERPT_WINDOW_CHARS);
-        focus = safeTrim(compactWhitespace(focus), MAX_FOCUS_TEXT_CHARS);
-        if (focus.isBlank()) {
-            focus = (title + "\n" + summary).trim();
-        }
-        focusById.put(id, focus);
-    }
-
-    private String extractExcerpt(String text, int hitIndex, int windowChars) {
-        if (text == null || text.isBlank()) return "";
-        if (hitIndex < 0) {
-            int end = Math.min(text.length(), Math.min(windowChars, MAX_FOCUS_TEXT_CHARS));
-            return text.substring(0, end);
-        }
-        int start = Math.max(0, hitIndex - 400);
-        int end = Math.min(text.length(), hitIndex + windowChars);
-        return text.substring(start, end);
-    }
-
-    private String compactWhitespace(String s) {
-        if (s == null) return "";
-        String t = s.replace("\t", " ");
-        // collapse 3+ blank lines
-        t = t.replaceAll("\n{3,}", "\n\n");
-        // collapse multiple spaces
-        t = t.replaceAll(" {2,}", " ");
-        return t.trim();
-    }
-
-    private List<TopicOptionResponse> dedupeById(List<TopicOptionResponse> in) {
-        if (in == null || in.isEmpty()) return List.of();
-        Map<String, TopicOptionResponse> map = new LinkedHashMap<>();
-        for (TopicOptionResponse o : in) {
-            if (o == null || o.getId() == null) continue;
-            map.putIfAbsent(o.getId(), o);
-        }
-        return new ArrayList<>(map.values());
-    }
-
+    // =========================================================
+    // AI detect prompt + contract
+    // =========================================================
     private String buildDetectPrompt(String trimmedMaterial) {
         return """
-Bạn là trợ giảng. Hãy đọc học liệu dưới đây và xác định xem nội dung có thể chia thành NHIỀU TIỂU MỤC (sub-topic) để làm bài riêng hay không.
+Bạn là trợ giảng. Hãy đọc học liệu dưới đây và xác định xem nội dung có thể chia thành NHIỀU PHẦN NHỎ / BÀI NHỎ để làm bài riêng hay không.
 
-Ví dụ minh hoạ (chỉ là ví dụ):
-- Nếu học liệu nói về "Vòng lặp" và có cả for / while / do-while => đây là nhiều tiểu mục.
-- Nếu chỉ nói về duy nhất vòng lặp for => chỉ 1 tiểu mục.
-
-YÊU CẦU:
-- Nếu có nhiều tiểu mục: liệt kê 2 đến 8 topic rõ ràng để học viên chọn.
-- Mỗi topic cần có: id, title, summary ngắn, keywords, và focusText (đoạn TRÍCH từ học liệu để tạo câu hỏi tập trung).
-- Nếu chỉ có 1 tiểu mục: trả isMulti=false và topics=[].
+QUY TẮC:
+- Nếu học liệu chứa nhiều phần (chương/bài/tiểu mục) khác nhau => isMulti=true và liệt kê 2..8 phần để học viên chọn.
+- Nếu học liệu chỉ tập trung vào 1 nội dung => isMulti=false và topics=[].
+- focusText PHẢI là đoạn trích từ học liệu, dùng để tạo đề tập trung cho phần đó.
 
 HỌC LIỆU:
 """ + trimmedMaterial + "\n";
@@ -474,6 +572,16 @@ RULES:
             if (out.size() >= maxSize) break;
         }
         return out;
+    }
+
+    private List<TopicOptionResponse> dedupeById(List<TopicOptionResponse> in) {
+        if (in == null || in.isEmpty()) return List.of();
+        Map<String, TopicOptionResponse> map = new LinkedHashMap<>();
+        for (TopicOptionResponse o : in) {
+            if (o == null || o.getId() == null) continue;
+            map.putIfAbsent(o.getId(), o);
+        }
+        return new ArrayList<>(map.values());
     }
 
     // ===== internal JSON mapping =====
