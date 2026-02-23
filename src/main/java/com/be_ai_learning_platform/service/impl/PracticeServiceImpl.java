@@ -3,6 +3,7 @@ package com.be_ai_learning_platform.service.impl;
 import com.be_ai_learning_platform.AI.GeminiResponsesClient;
 import com.be_ai_learning_platform.dto.request.GeneratePracticeSessionRequest;
 import com.be_ai_learning_platform.dto.request.PracticeGenerateRequest;
+import com.be_ai_learning_platform.dto.request.SelectTopicRequest;
 import com.be_ai_learning_platform.dto.request.StartPracticeSessionRequest;
 import com.be_ai_learning_platform.dto.request.SubmitPracticeRequest;
 import com.be_ai_learning_platform.dto.request.SubmitPracticeSessionRequest;
@@ -38,6 +39,7 @@ import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.PracticeService;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
 import com.be_ai_learning_platform.service.SystemSettingsService;
+import com.be_ai_learning_platform.service.TopicSelectionService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -87,6 +89,8 @@ public class PracticeServiceImpl implements PracticeService {
 
     private final SystemSettingsService settingsService;
 
+    private final TopicSelectionService topicSelectionService;
+
     private void ensureAiAvailable() {
         if (!settingsService.isAiEnabled()) {
             throw new ResponseStatusException(
@@ -107,7 +111,8 @@ public class PracticeServiceImpl implements PracticeService {
             GeminiResponsesClient responsesClient,
             ObjectMapper om,
             Cache<String, Object> practiceSessionCache,
-            SystemSettingsService settingsService
+            SystemSettingsService settingsService,
+            TopicSelectionService topicSelectionService
     ) {
         this.userRepo = userRepo;
         this.materialRepo = materialRepo;
@@ -120,6 +125,7 @@ public class PracticeServiceImpl implements PracticeService {
         this.om = om;
         this.practiceSessionCache = practiceSessionCache;
         this.settingsService = settingsService;
+        this.topicSelectionService = topicSelectionService;
     }
 
     // =========================================================
@@ -616,6 +622,19 @@ Câu hỏi ôn tập:
 
         int totalQuestions = getConfiguredTotalQuestions();
 
+        // ===== NEW: detect multi-lesson/topic before generating questions =====
+        TopicSelectionService.TopicSelectionResult sel = topicSelectionService.detectTopics(email, req.getMaterialId());
+        if (sel != null && sel.isMulti) {
+            GeneratePracticeSessionResponse res = new GeneratePracticeSessionResponse();
+            res.setStatus("NEED_TOPIC");
+            res.setMaterialId(req.getMaterialId());
+            res.setNumberOfQuestions(totalQuestions);
+            res.setDurationMinutes(computeDurationMinutes(totalQuestions));
+            res.setSelectionToken(sel.selectionToken);
+            res.setTopics(sel.topics);
+            return res;
+        }
+
         // AI generate 1 lần (BE ignore req.getNumberOfQuestions)
         GenerateQuestionsResponse generated =
                 questionGenerationService.generate(email, req.getMaterialId(), totalQuestions);
@@ -646,8 +665,68 @@ Câu hỏi ôn tập:
         practiceSessionCache.put(sessionKey(email, token), session);
 
         GeneratePracticeSessionResponse res = new GeneratePracticeSessionResponse();
+        res.setStatus("READY");
         res.setSessionToken(token);
         res.setMaterialId(req.getMaterialId());
+        res.setNumberOfQuestions(totalQuestions);
+        res.setDurationMinutes(duration);
+        return res;
+    }
+
+    @Override
+    public GeneratePracticeSessionResponse selectTopicAndGenerateSessionV2(String email, SelectTopicRequest req) {
+        if (req == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
+        }
+        ensureAiAvailable();
+        ensureValidConfiguredCounts();
+
+        String selectionToken = req.getSelectionToken();
+        String topicId = req.getTopicId();
+
+        // resolve focusText from cache
+        String focusText = topicSelectionService.resolveFocusText(email, selectionToken, topicId);
+
+        User me = getMe(email);
+
+        Long materialId = topicSelectionService.resolveMaterialId(email, selectionToken);
+        if (materialId == null) {
+            throw new ResponseStatusException(HttpStatus.GONE, "Topic selection expired. Please generate again.");
+        }
+
+        int totalQuestions = getConfiguredTotalQuestions();
+
+        GenerateQuestionsResponse generated =
+                questionGenerationService.generateRetest(email, materialId, totalQuestions, focusText);
+
+        validateGeneratedResponse(generated, totalQuestions);
+
+        String token = UUID.randomUUID().toString();
+        int duration = computeDurationMinutes(totalQuestions);
+
+        PracticeSessionData session = new PracticeSessionData();
+        session.sessionToken = token;
+        session.userId = me.getId();
+        session.userFullName = safeTrim(me.getFullName(), 120);
+        session.materialId = materialId;
+        session.numberOfQuestions = totalQuestions;
+        session.durationMinutes = duration;
+
+        List<SessionQuestion> qs = new ArrayList<>();
+        for (GeneratedQuestionItemResponse item : generated.getQuestions()) {
+            SessionQuestion sq = new SessionQuestion();
+            sq.key = UUID.randomUUID().toString();
+            sq.item = item;
+            qs.add(sq);
+        }
+        session.questions = qs;
+
+        practiceSessionCache.put(sessionKey(email, token), session);
+
+        GeneratePracticeSessionResponse res = new GeneratePracticeSessionResponse();
+        res.setStatus("READY");
+        res.setSessionToken(token);
+        res.setMaterialId(materialId);
         res.setNumberOfQuestions(totalQuestions);
         res.setDurationMinutes(duration);
         return res;
