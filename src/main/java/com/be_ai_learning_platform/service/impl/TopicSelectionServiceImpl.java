@@ -288,7 +288,7 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
         if (lines == null || lines.length == 0) return -1;
 
         List<String> keys = List.of(
-                "mục tiêu", "muc tieu",
+                "mục tiêu", "muc tieu","mụctiêu",
                 "mục đích", "muc dich",
                 "kết quả", "ket qua",
                 "đầu ra", "dau ra",

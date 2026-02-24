@@ -8,8 +8,8 @@ import lombok.Data;
 @Data
 public class GeneratePracticeSessionRequest {
 
-    @NotNull
     private Long materialId;
+    private String inputText;
 
     @NotNull
     @Min(1)
