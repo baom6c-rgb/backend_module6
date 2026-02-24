@@ -22,9 +22,7 @@ import java.util.Map;
 @RequestMapping("/api/student/materials")
 @RequiredArgsConstructor
 public class StudentMaterialController {
-
-    private static final int MIN_TEXT_CHARS = 200;     // chống text quá ngắn => câu hỏi rác
-    private static final int MAX_TEXT_CHARS = 20000;   // chống spam/nổ DB
+    private static final int MAX_TEXT_CHARS = 20000;
 
     private final FileExtractService fileExtractService;
     private final UserRepository userRepository;
@@ -57,11 +55,6 @@ public class StudentMaterialController {
                     .body("Lỗi: " + e.getMessage());
         }
     }
-
-    /**
-     * ✅ NEW: tạo học liệu từ text paste vào (không cần upload)
-     * FE gọi endpoint này -> nhận materialId -> dùng lại flow generatePreview/start/do/submit như cũ.
-     */
     @PostMapping("/text")
     public ResponseEntity<?> createFromText(
             @Valid @RequestBody CreateTextMaterialRequest req,
@@ -81,15 +74,11 @@ public class StudentMaterialController {
                 return ResponseEntity.badRequest().body("Nội dung không được để trống");
             }
 
-            if (raw.length() < MIN_TEXT_CHARS) {
-                return ResponseEntity.badRequest()
-                        .body("Nội dung quá ngắn (tối thiểu " + MIN_TEXT_CHARS + " ký tự) để tạo câu hỏi chất lượng");
-            }
-
             if (raw.length() > MAX_TEXT_CHARS) {
                 return ResponseEntity.badRequest()
                         .body("Nội dung quá dài (tối đa " + MAX_TEXT_CHARS + " ký tự). Hãy rút gọn hoặc chia nhỏ nội dung");
             }
+            String cleaned = ensureMeaningfulText(raw);
 
             LearningMaterial material = new LearningMaterial();
             material.setUser(user);
@@ -97,14 +86,12 @@ public class StudentMaterialController {
             String title = req.getTitle() == null ? "" : req.getTitle().trim();
             material.setFileName(title.isBlank() ? "Pasted Text" : title);
 
-            // ✅ phân biệt nguồn
             material.setFileType(FileType.TEXT);
 
             // optional: fileSize mô phỏng
-            material.setFileSize((long) raw.length());
+            material.setFileSize((long) cleaned.length());
 
-            // ✅ coi như đã “extract xong”
-            material.setExtractedText(raw);
+            material.setExtractedText(cleaned);
             material.setStatus(MaterialStatus.EXTRACTED);
 
             LearningMaterial saved = learningMaterialRepository.save(material);
@@ -113,13 +100,14 @@ public class StudentMaterialController {
                     "materialId", saved.getId(),
                     "message", "Tạo học liệu từ văn bản thành công!"
             ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("Lỗi: " + e.getMessage());
         }
     }
 
-    // ✅ US9: đọc lại văn bản đã trích xuất
     @GetMapping("/{id}/text")
     public ResponseEntity<?> getExtractedText(
             @PathVariable Long id,
@@ -138,13 +126,108 @@ public class StudentMaterialController {
                     .orElseThrow(() -> new RuntimeException("Không tìm thấy tài liệu"));
 
             String text = material.getExtractedText();
-            if (text == null || text.isBlank()) {
-                return ResponseEntity.badRequest().body("Tài liệu chưa trích xuất xong hoặc không có nội dung");
-            }
 
-            return ResponseEntity.ok(text);
+            return ResponseEntity.ok(Map.of(
+                    "materialId", material.getId(),
+                    "fileName", material.getFileName(),
+                    "text", text == null ? "" : text
+            ));
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Lỗi: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Lỗi: " + e.getMessage());
         }
+    }
+
+    /**
+     * Rule-based gate để chặn input "lung tung" nhưng KHÔNG chặn prompt ngắn có nghĩa.
+     * Mục tiêu: nếu người học nhập dạng "câu hỏi về hàm trong JS" thì vẫn tạo material bình thường.
+     */
+    private String ensureMeaningfulText(String input) {
+        String t = input == null ? "" : input.trim();
+        if (t.isEmpty()) {
+            throw new IllegalArgumentException("Nội dung không được để trống");
+        }
+
+        // Nếu có dấu hiệu code/snippet thì coi như hợp lệ (nhiều trường hợp paste code ngắn).
+        if (looksLikeCode(t)) {
+            return t;
+        }
+
+        // Phải có ít nhất 1 ký tự chữ/số (tránh chỉ emoji/ký tự đặc biệt)
+        boolean hasAlphaNum = false;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (Character.isLetterOrDigit(c)) {
+                hasAlphaNum = true;
+                break;
+            }
+        }
+        if (!hasAlphaNum) {
+            throw new IllegalArgumentException("Nội dung bạn nhập không có chữ/số nên hệ thống không thể hiểu. Hãy nhập chủ đề rõ ràng (vd: 'câu hỏi về hàm trong JS').");
+        }
+
+        // Tỷ lệ ký tự lạ quá cao -> từ chối
+        int weird = 0;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (Character.isLetterOrDigit(c)
+                    || Character.isWhitespace(c)
+                    || c == '-' || c == '_' || c == '.' || c == ',' || c == '?' || c == '!' || c == ':' || c == ';' || c == '/' || c == '\\') {
+                continue;
+            }
+            weird++;
+        }
+        if (weird > 0 && weird * 1.0 / Math.max(1, t.length()) > 0.45) {
+            throw new IllegalArgumentException("Nội dung có quá nhiều ký tự lạ nên hệ thống không thể hiểu. Hãy nhập lại chủ đề rõ ràng.");
+        }
+
+        // Keyboard smash / lặp ký tự quá nhiều
+        if (hasLongRepeatRun(t, 8)) {
+            throw new IllegalArgumentException("Có vẻ bạn nhập nội dung không có nghĩa (lặp ký tự quá nhiều). Hãy nhập lại chủ đề rõ ràng.");
+        }
+
+        // Prompt ngắn vẫn OK, nhưng tối thiểu cần 2 "từ" có chữ/số để AI hiểu ý.
+        // (vd: "hàm JS" vẫn OK)
+        String[] parts = t.split("\\s+");
+        int keywords = 0;
+        for (String p : parts) {
+            if (p == null || p.isBlank()) continue;
+            String cleaned = p.replaceAll("[^\\p{L}\\p{N}]", "");
+            if (cleaned.length() >= 2) keywords++;
+        }
+        if (keywords < 2 && t.length() < 60) {
+            throw new IllegalArgumentException("Nội dung chưa đủ rõ. Hãy nhập ít nhất 2 từ khoá (vd: 'hàm JS', 'array methods', 'Spring Security JWT').");
+        }
+
+        return t;
+    }
+
+    private boolean looksLikeCode(String text) {
+        if (text == null) return false;
+        String t = String.valueOf(text);
+        boolean hasNewline = t.contains("\n");
+        String[] hints = {"{", "}", ";", "=>", "function", "const ", "let ", "var ", "import ", "export ", "class ", "public ", "private ", "@"};
+        boolean hit = false;
+        for (String h : hints) {
+            if (t.contains(h)) {
+                hit = true;
+                break;
+            }
+        }
+        return hasNewline || hit;
+    }
+
+    private boolean hasLongRepeatRun(String s, int run) {
+        if (s == null || s.isEmpty()) return false;
+        int c = 1;
+        for (int i = 1; i < s.length(); i++) {
+            if (s.charAt(i) == s.charAt(i - 1)) {
+                c++;
+                if (c >= run) return true;
+            } else {
+                c = 1;
+            }
+        }
+        return false;
     }
 }
