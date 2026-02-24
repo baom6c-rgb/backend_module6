@@ -667,10 +667,17 @@ Câu hỏi ôn tập:
         ensureValidConfiguredCounts();
 
         String selectionToken = req.getSelectionToken();
-        String topicId = req.getTopicId();
+        List<String> topicIds = req.getTopicIds();
 
-        // resolve focusText from cache
-        String focusText = topicSelectionService.resolveFocusText(email, selectionToken, topicId);
+        if (selectionToken == null || selectionToken.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "selectionToken is required");
+        }
+        if (topicIds == null || topicIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "topicIds is required");
+        }
+
+        // resolve focusText from cache (multi-select)
+        String focusText = topicSelectionService.resolveFocusText(email, selectionToken, topicIds);
 
         User me = getMe(email);
 
@@ -716,7 +723,6 @@ Câu hỏi ôn tập:
         res.setDurationMinutes(duration);
         return res;
     }
-
     @Override
     public StartPracticeSessionResponse startSessionV2(String email, StartPracticeSessionRequest req) {
         if (req == null || req.getSessionToken() == null || req.getSessionToken().isBlank()) {

@@ -23,6 +23,7 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
     private static final int SMALL_TEXT_ASSUME_SINGLE_CHARS = 1200;
     private static final int MAX_DETECT_CHARS = 6000;
     private static final int MAX_FOCUS_TEXT_CHARS = 2500;
+    private static final int MAX_MULTI_FOCUS_TEXT_CHARS = 6000;
 
     // Objective bullets
     private static final int BULLET_SECTION_SCAN_LIMIT = 5000;
@@ -216,7 +217,59 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
         }
         return focus;
     }
+    @Override
+    public String resolveFocusText(String currentEmail, String selectionToken, List<String> topicIds) {
+        if (selectionToken == null || selectionToken.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "selectionToken is required");
+        }
+        if (topicIds == null || topicIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "topicIds is required");
+        }
 
+        Object obj = practiceSessionCache.getIfPresent(selectionKey(currentEmail, selectionToken));
+        if (!(obj instanceof TopicSelectionCacheData data)) {
+            throw new ResponseStatusException(HttpStatus.GONE, "Topic selection expired. Please generate again.");
+        }
+        if (!Objects.equals(data.userEmail, currentEmail)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Selection does not belong to current user");
+        }
+
+        // Deduplicate while keeping order
+        LinkedHashSet<String> uniq = new LinkedHashSet<>();
+        for (String id : topicIds) {
+            if (id != null && !id.isBlank()) uniq.add(id.trim());
+        }
+        if (uniq.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "topicIds is required");
+        }
+
+        StringBuilder sb = new StringBuilder();
+        int added = 0;
+
+        for (String id : uniq) {
+            String focus = data.focusByTopicId == null ? null : data.focusByTopicId.get(id);
+            if (focus == null || focus.isBlank()) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Topic not found: " + id);
+            }
+
+            if (sb.length() > 0) sb.append("\n\n---\n\n");
+            sb.append(focus.trim());
+            added++;
+
+            if (sb.length() >= MAX_MULTI_FOCUS_TEXT_CHARS) break;
+        }
+
+        String merged = sb.toString().trim();
+        if (merged.length() > MAX_MULTI_FOCUS_TEXT_CHARS) {
+            merged = merged.substring(0, MAX_MULTI_FOCUS_TEXT_CHARS);
+        }
+
+        // Nếu chọn quá nhiều, vẫn cho chạy nhưng clamp
+        if (added < uniq.size()) {
+            merged = (merged + "\n\n(Lưu ý: Bạn đã chọn nhiều phần, hệ thống chỉ lấy phần đầu để tránh quá dài.)").trim();
+        }
+        return merged;
+    }
     @Override
     public Long resolveMaterialId(String currentEmail, String selectionToken) {
         if (selectionToken == null || selectionToken.isBlank()) {
