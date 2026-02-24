@@ -19,6 +19,11 @@ public interface TopicSelectionService {
     String resolveFocusText(String currentEmail, String selectionToken, String topicId);
 
     /**
+     * Resolve focusText for multiple topicIds. The service will merge and clamp the result.
+     */
+    String resolveFocusText(String currentEmail, String selectionToken, List<String> topicIds);
+
+    /**
      * Resolve materialId bound to selectionToken.
      */
     Long resolveMaterialId(String currentEmail, String selectionToken);
