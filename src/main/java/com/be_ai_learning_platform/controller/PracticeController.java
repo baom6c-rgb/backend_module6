@@ -63,7 +63,18 @@ public class PracticeController {
         return practiceService.getReview(authentication.getName(), attemptId);
     }
 
-    // =========================
+
+    // ✅ 5b) Study Guide (lazy-load: chỉ generate khi user bấm)
+    @GetMapping("/attempts/{attemptId}/study-guide")
+    public java.util.Map<String, String> getStudyGuide(
+            Authentication authentication,
+            @PathVariable Long attemptId
+    ) {
+        String guide = practiceService.getOrGenerateStudyGuide(authentication.getName(), attemptId);
+        return java.util.Map.of("studyGuide", guide);
+    }
+
+// =========================
     // V2 - No preview, no DB until submit
     // =========================
 
