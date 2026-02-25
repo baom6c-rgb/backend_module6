@@ -382,7 +382,19 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
 
         return toAiResponse(s);
     }
+    @Override
+    public AiSettingsResponse clearAiApiKey() {
+        SystemSettings s = getSettings();
 
+        // clear secret
+        secretStore.clearAiApiKey();
+
+        // update timestamp to reflect change
+        s.setUpdatedAt(LocalDateTime.now());
+        repo.save(s);
+
+        return toAiResponse(s);
+    }
     // ===================== For AI clients =====================
 
     @Override

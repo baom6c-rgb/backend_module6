@@ -18,6 +18,7 @@ public interface SystemSettingsService {
     // ===== AI settings (Admin tab: Model AI) =====
     AiSettingsResponse getAi();
     AiSettingsResponse updateAi(UpdateAiSettingsRequest req);
+    AiSettingsResponse clearAiApiKey();
 
     // ===== for AI clients =====
     String requireAiApiKey();
