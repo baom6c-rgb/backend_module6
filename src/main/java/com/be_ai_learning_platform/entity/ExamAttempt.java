@@ -49,4 +49,8 @@ public class ExamAttempt {
     @Lob
     @Column(name = "ai_feedback", columnDefinition = "LONGTEXT")
     private String aiFeedback;
+
+    @Lob
+    @Column(name = "study_guide", columnDefinition = "LONGTEXT")
+    private String studyGuide;
 }

@@ -10,7 +10,8 @@ public class SubmitPracticeResponse {
     private Boolean timedOut;       // nộp do hết giờ hay không
 
     private String feedback;        // rule-based summary
-    private String aiFeedback;      // AI nhận xét tổng (sai ở đâu, gợi ý học lại)
+    private String aiFeedback;
+    private String studyGuide;      // ✅ NEW: gợi ý ôn tập (AI request riêng)      // AI nhận xét tổng (sai ở đâu, gợi ý học lại)
 
     public Integer getScore() { return score; }
     public void setScore(Integer score) { this.score = score; }
@@ -32,4 +33,8 @@ public class SubmitPracticeResponse {
 
     public String getAiFeedback() { return aiFeedback; }
     public void setAiFeedback(String aiFeedback) { this.aiFeedback = aiFeedback; }
+
+    public String getStudyGuide() { return studyGuide; }
+    public void setStudyGuide(String studyGuide) { this.studyGuide = studyGuide; }
+
 }

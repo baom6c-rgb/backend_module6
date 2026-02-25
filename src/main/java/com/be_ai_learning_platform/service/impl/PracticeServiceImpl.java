@@ -37,6 +37,7 @@ import com.be_ai_learning_platform.repository.LearningMaterialRepository;
 import com.be_ai_learning_platform.repository.QuestionRepository;
 import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.PracticeService;
+import com.be_ai_learning_platform.service.AiStudyGuideService;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
 import com.be_ai_learning_platform.service.SystemSettingsService;
 import com.be_ai_learning_platform.service.TopicSelectionService;
@@ -84,6 +85,7 @@ public class PracticeServiceImpl implements PracticeService {
     private final QuestionGenerationService questionGenerationService;
 
     private final GeminiResponsesClient responsesClient;
+    private final AiStudyGuideService aiStudyGuideService;
     private final ObjectMapper om;
     private final Cache<String, Object> practiceSessionCache;
 
@@ -112,7 +114,8 @@ public class PracticeServiceImpl implements PracticeService {
             ObjectMapper om,
             Cache<String, Object> practiceSessionCache,
             SystemSettingsService settingsService,
-            TopicSelectionService topicSelectionService
+            TopicSelectionService topicSelectionService,
+            AiStudyGuideService aiStudyGuideService
     ) {
         this.userRepo = userRepo;
         this.materialRepo = materialRepo;
@@ -126,6 +129,7 @@ public class PracticeServiceImpl implements PracticeService {
         this.practiceSessionCache = practiceSessionCache;
         this.settingsService = settingsService;
         this.topicSelectionService = topicSelectionService;
+        this.aiStudyGuideService = aiStudyGuideService;
     }
 
     // =========================================================
@@ -481,7 +485,10 @@ Câu hỏi ôn tập:
         // ✅ Guard: không bao giờ mất Điểm mạnh/Điểm yếu + cấm placeholder
         formatted = ensureStrengthWeaknessPresent(me.getFullName(), formatted, examQuestions, results, scorePct);
 
+        // ✅ Study guide: LAZY-LOAD (chỉ generate khi user bấm "Hướng dẫn ôn tập")
+        // Submit xong chỉ lưu/ trả aiFeedback (Điểm mạnh/Điểm yếu). StudyGuide sẽ có endpoint riêng.
         attempt.setAiFeedback(formatted);
+        attempt.setStudyGuide(null);
 
         attemptRepo.save(attempt);
 
@@ -500,6 +507,7 @@ Câu hỏi ôn tập:
 
         res.setFeedback(buildStaticFeedback(scorePct));
         res.setAiFeedback(formatted);
+        res.setStudyGuide("");
         return res;
     }
 
@@ -590,6 +598,73 @@ Câu hỏi ôn tập:
         res.setAiFeedback(attempt.getAiFeedback());
         res.setItems(items);
         return res;
+    }
+
+
+    // ✅ LAZY Study Guide: chỉ generate khi user bấm "Hướng dẫn ôn tập"
+    @Override
+    public String getOrGenerateStudyGuide(String email, Long attemptId) {
+        User me = getMe(email);
+
+        ExamAttempt attempt = attemptRepo.findByIdAndUserIdFetchExam(attemptId, me.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attempt not found"));
+
+        // chỉ cho phép sau khi đã submit
+        if (attempt.getSubmitTime() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Attempt is not submitted yet");
+        }
+
+        String existing = attempt.getStudyGuide();
+        if (existing != null && !existing.isBlank()) {
+            return existing.trim();
+        }
+
+        // build input json từ attempt đã lưu (answersJson + questions + score)
+        Exam exam = attempt.getExam();
+        if (exam == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Attempt has no exam");
+        }
+
+        List<AnswerResult> stored = readAnswersJson(attempt.getAnswersJson());
+        if (stored.isEmpty()) {
+            // không có answers thì fallback luôn
+            String fb = aiStudyGuideService.fallbackStudyGuide(me.getFullName());
+            attempt.setStudyGuide(fb);
+            attemptRepo.save(attempt);
+            return fb;
+        }
+
+        List<ExamQuestion> links = examQuestionRepo.findAllByExamIdFetchQuestion(exam.getId());
+        if (links.isEmpty()) {
+            String fb = aiStudyGuideService.fallbackStudyGuide(me.getFullName());
+            attempt.setStudyGuide(fb);
+            attemptRepo.save(attempt);
+            return fb;
+        }
+
+        List<Question> qs = links.stream().map(ExamQuestion::getQuestion).filter(Objects::nonNull).toList();
+
+        int scorePct = 0;
+        if (attempt.getScore() != null) {
+            double s = attempt.getScore();
+            if (Double.isFinite(s)) scorePct = (int) Math.round(Math.max(0, Math.min(100, s)));
+        }
+
+        String guide = "";
+        try {
+            String userResultJson = buildStudyGuideInputJson(qs, stored, scorePct);
+            guide = aiStudyGuideService.generateStudyGuide(me.getFullName(), userResultJson);
+        } catch (Exception ignore) {
+        }
+
+        if (guide == null || guide.isBlank()) {
+            guide = aiStudyGuideService.fallbackStudyGuide(me.getFullName());
+        }
+
+        attempt.setStudyGuide(guide);
+        attemptRepo.save(attempt);
+
+        return guide.trim();
     }
 
     // =========================================================
@@ -930,7 +1005,10 @@ Câu hỏi ôn tập:
                 scorePct
         );
 
+        // ✅ Study guide: LAZY-LOAD (chỉ generate khi user bấm "Hướng dẫn ôn tập")
+        // Submit xong chỉ lưu/ trả aiFeedback (Điểm mạnh/Điểm yếu). StudyGuide sẽ có endpoint riêng.
         attempt.setAiFeedback(formatted);
+        attempt.setStudyGuide(null);
 
         attemptRepo.save(attempt);
 
@@ -947,6 +1025,7 @@ Câu hỏi ôn tập:
         res.setTimedOut(timedOut);
         res.setFeedback(buildStaticFeedback(scorePct));
         res.setAiFeedback(formatted);
+        res.setStudyGuide("");
 
         // ===== Retest (cooldown) =====
         boolean failed = attempt.getStatus() == ExamResult.FAILED;
@@ -1540,7 +1619,7 @@ Bài làm học viên: %s
 Bạn là trợ giảng. Hãy nhận xét bài làm của học viên bằng tiếng Việt.
 YÊU CẦU QUAN TRỌNG:
 - BẮT ĐẦU bằng đúng 1 câu chào: "Chào %s,"
-- Sau đó chỉ trả về đúng 3 mục sau theo format và KHÔNG thêm mục khác:
+- Sau đó chỉ trả về đúng 2 mục sau theo format và KHÔNG thêm mục khác:
 
 Điểm mạnh:
 - ...
@@ -1550,35 +1629,9 @@ YÊU CẦU QUAN TRỌNG:
 - ...
 - ...
 
-Gợi ý ôn tập:
-(Trả về đúng theo mẫu sau, giữ nguyên nhãn và thứ tự)
-
-Tiêu đề: ...
-Môn học: ...
-Chủ đề: ...
-Gợi ý ôn tập:
-- ...
-- ...
-- ...
-
-Các khái niệm chính:
-- ...
-
-Danh sách từ vựng:
-- ...
-
-Câu hỏi ôn tập:
-- ...
-- ...
-- ...
-- ...
-- ...
-
 QUY TẮC BẮT BUỘC:
 - KHÔNG được dùng ký hiệu placeholder như "...", "…", "(Chưa có)", "(Chưa xác định)".
 - Mỗi mục "Điểm mạnh" và "Điểm yếu" phải có ít nhất 2 bullet "- " và phải dựa vào dữ liệu chấm điểm.
-- Trong "Gợi ý ôn tập" (khối template), phần "Gợi ý ôn tập:" phải có 3 bullet "- " (cụ thể việc cần làm).
-- "Câu hỏi ôn tập" bắt buộc đúng 5 câu (mỗi câu 1 bullet).
 - Tuyệt đối KHÔNG dùng ký tự backtick: `
 - Không markdown, không in đậm, không đánh số.
 - Ngắn gọn nhưng rõ ràng. Không bịa kiến thức ngoài phạm vi câu hỏi.
@@ -1629,7 +1682,7 @@ QUY TẮC BẮT BUỘC:
 Bạn là trợ giảng. Hãy nhận xét bài làm của học viên bằng tiếng Việt.
 YÊU CẦU QUAN TRỌNG:
 - BẮT ĐẦU bằng đúng 1 câu chào: "Chào %s,"
-- Sau đó chỉ trả về đúng 3 mục sau theo format và KHÔNG thêm mục khác:
+- Sau đó chỉ trả về đúng 2 mục sau theo format và KHÔNG thêm mục khác:
 
 Điểm mạnh:
 - ...
@@ -1639,35 +1692,9 @@ YÊU CẦU QUAN TRỌNG:
 - ...
 - ...
 
-Gợi ý ôn tập:
-(Trả về đúng theo mẫu sau, giữ nguyên nhãn và thứ tự)
-
-Tiêu đề: ...
-Môn học: ...
-Chủ đề: ...
-Gợi ý ôn tập:
-- ...
-- ...
-- ...
-
-Các khái niệm chính:
-- ...
-
-Danh sách từ vựng:
-- ...
-
-Câu hỏi ôn tập:
-- ...
-- ...
-- ...
-- ...
-- ...
-
 QUY TẮC BẮT BUỘC:
 - KHÔNG được dùng ký hiệu placeholder như "...", "…", "(Chưa có)", "(Chưa xác định)".
 - Mỗi mục "Điểm mạnh" và "Điểm yếu" phải có ít nhất 2 bullet "- " và phải dựa vào dữ liệu chấm điểm.
-- Trong "Gợi ý ôn tập" (khối template), phần "Gợi ý ôn tập:" phải có 3 bullet "- " (cụ thể việc cần làm).
-- "Câu hỏi ôn tập" bắt buộc đúng 5 câu (mỗi câu 1 bullet).
 - Tuyệt đối KHÔNG dùng ký tự backtick: `
 - Không markdown, không in đậm, không đánh số.
 - Ngắn gọn nhưng rõ ràng. Không bịa kiến thức ngoài phạm vi câu hỏi.
@@ -2073,20 +2100,8 @@ QUY TẮC BẮT BUỘC:
             if (!containsPlaceholder(text)) return text;
         }
 
-        // tách phần "Gợi ý ôn tập:" trở đi (nếu có) để giữ lại
-        String studyGuide = extractStudyGuideBlock(text);
-
-        // tự build strengths/weakness từ kết quả chấm
-        String safe = buildRuleBasedStrengthWeakness(userFullName, questions, results, scorePct);
-
-        // nối lại studyGuide nếu có
-        if (studyGuide != null && !studyGuide.isBlank()) {
-            safe = (safe + "\n" + studyGuide.trim()).trim();
-        } else {
-            // nếu không có study guide thì nhét một study guide tối thiểu (không dùng placeholder)
-            safe = (safe + "\n" + minimalStudyGuide()).trim();
-        }
-        return safe;
+        // tự build strengths/weakness từ kết quả chấm (không gắn Study Guide ở đây nữa)
+        return buildRuleBasedStrengthWeakness(userFullName, questions, results, scorePct);
     }
 
     private boolean hasSectionWithBullets(String text, String header) {
@@ -2251,5 +2266,57 @@ Câu hỏi ôn tập:
             out.add(ar);
         }
         return out;
+    }
+
+    private String buildStudyGuideInputJson(List<Question> questions, List<AnswerResult> results, int scorePct) {
+        Map<Long, AnswerResult> map = (results == null) ? Map.of() :
+                results.stream()
+                        .filter(r -> r != null && r.questionId != null)
+                        .collect(Collectors.toMap(r -> r.questionId, r -> r, (a, b) -> b));
+
+        List<Map<String, Object>> items = new ArrayList<>();
+        int idx = 1;
+
+        if (questions != null) {
+            for (Question q : questions) {
+                if (q == null || q.getId() == null) continue;
+
+                AnswerResult ar = map.get(q.getId());
+
+                Map<String, Object> it = new LinkedHashMap<>();
+                it.put("index", idx++);
+                it.put("questionId", q.getId());
+                it.put("type", String.valueOf(q.getQuestionType()));
+                it.put("content", safeTrim(q.getContent(), 1200));
+
+                if (q.getQuestionType() == QuestionType.MCQ) {
+                    it.put("correctAnswer", normalizeChoice(ar != null ? ar.correctAnswer : q.getCorrectAnswer()));
+                    it.put("selectedAnswer", ar != null ? safeStr(ar.selectedAnswer) : "");
+                } else {
+                    // ESSAY: lấy sampleAnswer từ AnswerResult nếu có, fallback rubric
+                    String sample = (ar != null && ar.sampleAnswer != null) ? ar.sampleAnswer : readRubric(q.getAnalysis(), null).sampleAnswer;
+                    it.put("sampleAnswer", safeTrim(sample, 1200));
+                    it.put("studentAnswer", ar != null ? safeTrim(ar.textAnswer, 1200) : "");
+                }
+
+                int sc = (ar != null && ar.score != null) ? ar.score : 0;
+                int mx = (ar != null && ar.maxScore != null) ? ar.maxScore : 0;
+                it.put("score", sc);
+                it.put("maxScore", mx);
+                it.put("isCorrect", mx > 0 && sc >= mx);
+
+                items.add(it);
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("scorePct", scorePct);
+        payload.put("items", items);
+
+        try {
+            return om.writeValueAsString(payload);
+        } catch (Exception e) {
+            return "{\"scorePct\":" + scorePct + ",\"items\":[]}";
+        }
     }
 }

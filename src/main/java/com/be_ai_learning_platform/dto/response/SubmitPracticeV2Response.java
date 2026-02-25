@@ -28,4 +28,7 @@ public class SubmitPracticeV2Response {
     private Boolean timedOut;
     private String feedback;
     private String aiFeedback;
+
+    // ✅ NEW: gợi ý ôn tập (AI request riêng)
+    private String studyGuide;
 }

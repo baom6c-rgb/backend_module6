@@ -33,4 +33,5 @@ public interface PracticeService {
     RetestStatusResponse getRetestStatusV2(String email, Long attemptId);
     StartPracticeSessionResponse startRetestV2(String email, Long attemptId);
 
+    String getOrGenerateStudyGuide(String name, Long attemptId);
 }
