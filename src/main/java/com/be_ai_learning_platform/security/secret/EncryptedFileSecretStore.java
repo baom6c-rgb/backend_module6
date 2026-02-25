@@ -116,7 +116,21 @@ public class EncryptedFileSecretStore implements SecretStore {
         }
         return m;
     }
+    @Override
+    public void clearAiApiKey() {
+        try {
+            Path path = Paths.get(aiKeyPath).toAbsolutePath();
+            if (Files.exists(path)) {
+                Files.delete(path);
+            }
 
+            cachedKey = null;
+            cachedMasked = null;
+
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to clear AI api key secret file", e);
+        }
+    }
     // ===================== internals =====================
 
     private void tryLoadFromDisk() {

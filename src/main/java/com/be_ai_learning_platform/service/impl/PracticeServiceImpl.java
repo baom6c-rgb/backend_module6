@@ -139,12 +139,7 @@ public class PracticeServiceImpl implements PracticeService {
 
         User me = getMe(email);
 
-        LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
-
-        if (material.getStatus() != MaterialStatus.EXTRACTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
-        }
+        LearningMaterial material = resolveMaterialForGenerate(me, req.getMaterialId(), req.getInputText());
 
         // Backward compatibility: client gửi token thì thử lấy cache
         String incomingToken = normalizeToken(req.getPreviewToken());
@@ -182,12 +177,7 @@ public class PracticeServiceImpl implements PracticeService {
 
         User me = getMe(email);
 
-        LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
-
-        if (material.getStatus() != MaterialStatus.EXTRACTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
-        }
+        LearningMaterial material = resolveMaterialForGenerate(me, req.getMaterialId(), req.getInputText());
 
         // Strict mode: bắt buộc token để đảm bảo không gọi AI lần 2
         String token = normalizeToken(req.getPreviewToken());
@@ -613,12 +603,7 @@ Câu hỏi ôn tập:
 
         User me = getMe(email);
 
-        LearningMaterial material = materialRepo.findByIdAndUser(req.getMaterialId(), me)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
-
-        if (material.getStatus() != MaterialStatus.EXTRACTED) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
-        }
+        LearningMaterial material = resolveMaterialForGenerate(me, req.getMaterialId(), req.getInputText());
 
         int totalQuestions = getConfiguredTotalQuestions();
 
@@ -682,10 +667,17 @@ Câu hỏi ôn tập:
         ensureValidConfiguredCounts();
 
         String selectionToken = req.getSelectionToken();
-        String topicId = req.getTopicId();
+        List<String> topicIds = req.getTopicIds();
 
-        // resolve focusText from cache
-        String focusText = topicSelectionService.resolveFocusText(email, selectionToken, topicId);
+        if (selectionToken == null || selectionToken.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "selectionToken is required");
+        }
+        if (topicIds == null || topicIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "topicIds is required");
+        }
+
+        // resolve focusText from cache (multi-select)
+        String focusText = topicSelectionService.resolveFocusText(email, selectionToken, topicIds);
 
         User me = getMe(email);
 
@@ -731,7 +723,6 @@ Câu hỏi ôn tập:
         res.setDurationMinutes(duration);
         return res;
     }
-
     @Override
     public StartPracticeSessionResponse startSessionV2(String email, StartPracticeSessionRequest req) {
         if (req == null || req.getSessionToken() == null || req.getSessionToken().isBlank()) {
@@ -1771,7 +1762,9 @@ QUY TẮC BẮT BUỘC:
     // =========================================================
     private void validateGenerateRequest(PracticeGenerateRequest req) {
         if (req == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
-        if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
+        if (req.getMaterialId() == null && (req.getInputText() == null || req.getInputText().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId or inputText is required");
+        }
 
         // Backward-compatible: FE vẫn gửi numberOfQuestions, nhưng BE ignore (không validate range nữa)
         if (req.getNumberOfQuestions() == null) {
@@ -1781,12 +1774,109 @@ QUY TẮC BẮT BUỘC:
 
     private void validateGenerateV2Request(GeneratePracticeSessionRequest req) {
         if (req == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
-        if (req.getMaterialId() == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId is required");
+        if (req.getMaterialId() == null && (req.getInputText() == null || req.getInputText().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "materialId or inputText is required");
+        }
 
         if (req.getNumberOfQuestions() == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions is required");
         }
     }
+    // =========================================================
+    // Text-only support (không upload file)
+    // =========================================================
+    private LearningMaterial resolveMaterialForGenerate(User me, Long materialId, String inputText) {
+        if (materialId != null) {
+            LearningMaterial material = materialRepo.findByIdAndUser(materialId, me)
+                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
+
+            if (material.getStatus() != MaterialStatus.EXTRACTED) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
+            }
+            return material;
+        }
+
+        // Text-only flow
+        String cleaned = ensureMeaningfulChatText(inputText);
+
+        LearningMaterial m = new LearningMaterial();
+        m.setUser(me);
+        m.setFileName("Chat text");
+        m.setFileType(com.be_ai_learning_platform.entity.enums.FileType.TEXT);
+        m.setStatus(MaterialStatus.EXTRACTED);
+        m.setExtractedText(cleaned);
+
+        return materialRepo.save(m);
+    }
+
+    /**
+     * Rule-based gate để chặn input "lung tung" trước khi gọi AI.
+     * Trả về text đã được trim/normalize nếu hợp lệ.
+     */
+    private String ensureMeaningfulChatText(String inputText) {
+        if (inputText == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "inputText is required");
+        }
+        String t = inputText.trim();
+        if (t.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nội dung bạn nhập đang trống. Hãy nhập chủ đề rõ ràng để tạo đề.");
+        }
+
+        // Giới hạn an toàn (tránh spam)
+        if (t.length() > 4000) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Bạn nhập quá dài. Hãy tóm tắt lại chủ đề (tối đa 4000 ký tự).");
+        }
+        // Đếm chữ (token đơn giản)
+        String[] words = t.split("\\s+");
+        int wordCount = 0;
+        for (String w : words) {
+            if (w.isBlank()) continue;
+            // tính những token có ít nhất 2 ký tự chữ/số
+            if (w.replaceAll("[^\\p{L}\\p{N}]", "").length() >= 2) wordCount++;
+        }
+        if (wordCount < 2) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Nội dung chưa đủ rõ. Hãy nhập ít nhất 2 từ khoá (vd: 'hàm JS', 'array methods')."
+            );
+        }
+        // Tỷ lệ ký tự lạ (emoji/ký tự đặc biệt) quá cao
+        int lettersDigits = 0;
+        int weird = 0;
+        for (int i = 0; i < t.length(); i++) {
+            char c = t.charAt(i);
+            if (Character.isLetterOrDigit(c) || Character.isWhitespace(c) || c == '-' || c == '_' || c == '.' || c == ',' || c == '?' || c == '!' || c == ':' || c == ';') {
+                lettersDigits++;
+            } else {
+                weird++;
+            }
+        }
+        if (weird > 0 && weird * 1.0 / Math.max(1, t.length()) > 0.35) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Nội dung có quá nhiều ký tự lạ nên hệ thống không thể hiểu. Hãy nhập lại chủ đề rõ ràng.");
+        }
+
+        // Keyboard smash / lặp ký tự quá nhiều (aaaaaa, kkkkkk, hahahahaha... vẫn ok nhẹ)
+        if (hasLongRepeatRun(t, 6)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Có vẻ bạn nhập nội dung không có nghĩa (lặp ký tự quá nhiều). Hãy nhập lại chủ đề rõ ràng.");
+        }
+
+        return t;
+    }
+
+    private boolean hasLongRepeatRun(String s, int limit) {
+        int run = 1;
+        for (int i = 1; i < s.length(); i++) {
+            if (s.charAt(i) == s.charAt(i - 1)) {
+                run++;
+                if (run >= limit) return true;
+            } else {
+                run = 1;
+            }
+        }
+        return false;
+    }
+
+
 
     private int computeDurationMinutes(int numberOfQuestions) {
         int n = Math.max(1, numberOfQuestions);

@@ -42,4 +42,8 @@ public class AdminSettingsController {
     ) {
         return ResponseEntity.ok(settingsService.updateAi(req));
     }
+    @DeleteMapping("/ai/key")
+    public ResponseEntity<AiSettingsResponse> clearAiKey() {
+        return ResponseEntity.ok(settingsService.clearAiApiKey());
+    }
 }

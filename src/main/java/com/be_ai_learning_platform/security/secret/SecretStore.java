@@ -18,4 +18,6 @@ public interface SecretStore {
      * Example: abc****xyz
      */
     String maskAiApiKey();
+
+    void clearAiApiKey();
 }
