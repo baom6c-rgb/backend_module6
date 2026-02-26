@@ -11,8 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -25,17 +25,22 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
 @WebMvcTest(AdminController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(AdminControllerTest.MockConfig.class)
 class AdminControllerTest {
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    AdminControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private AdminService adminService;
 
     // ========================= ADD ADMIN =========================
     @Test
@@ -49,7 +54,7 @@ class AdminControllerTest {
             }
             """;
 
-        when(MockConfig.adminService.addAdmin(any(AdminAddAdminRequest.class)))
+        when(adminService.addAdmin(any(AdminAddAdminRequest.class)))
                 .thenReturn(any(AdminResponse.class));
 
         // when & then
@@ -58,7 +63,7 @@ class AdminControllerTest {
                         .content(requestJson))
                 .andExpect(status().isCreated());
 
-        verify(MockConfig.adminService).addAdmin(any(AdminAddAdminRequest.class));
+        verify(adminService).addAdmin(any(AdminAddAdminRequest.class));
     }
 
     // ========================= ADD USER (STUDENT) =========================
@@ -75,7 +80,7 @@ class AdminControllerTest {
             }
             """;
 
-        when(MockConfig.adminService.addUser(any(AdminAddUserRequest.class)))
+        when(adminService.addUser(any(AdminAddUserRequest.class)))
                 .thenReturn(any(AdminResponse.class));
 
         // when & then
@@ -84,14 +89,14 @@ class AdminControllerTest {
                         .content(requestJson))
                 .andExpect(status().isCreated());
 
-        verify(MockConfig.adminService).addUser(any(AdminAddUserRequest.class));
+        verify(adminService).addUser(any(AdminAddUserRequest.class));
     }
 
     // ========================= GET ALL USERS =========================
     @Test
     void getAllUsers_success() throws Exception {
         // given
-        when(MockConfig.adminService.getAllUsers())
+        when(adminService.getAllUsers())
                 .thenReturn(Arrays.asList(
                         any(AdminResponse.class),
                         any(AdminResponse.class)
@@ -101,13 +106,13 @@ class AdminControllerTest {
         mockMvc.perform(get("/api/admin/users"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getAllUsers();
+        verify(adminService).getAllUsers();
     }
 
     @Test
     void getAllUsers_emptyList_success() throws Exception {
         // given
-        when(MockConfig.adminService.getAllUsers())
+        when(adminService.getAllUsers())
                 .thenReturn(List.of());
 
         // when & then
@@ -115,21 +120,21 @@ class AdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
-        verify(MockConfig.adminService).getAllUsers();
+        verify(adminService).getAllUsers();
     }
 
     // ========================= PENDING APPROVALS =========================
     @Test
     void pendingApprovals_success() throws Exception {
         // given
-        when(MockConfig.adminService.getPendingApprovals())
+        when(adminService.getPendingApprovals())
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/admin/approvals/pending"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getPendingApprovals();
+        verify(adminService).getPendingApprovals();
     }
 
     // ========================= APPROVE =========================
@@ -137,13 +142,13 @@ class AdminControllerTest {
     void approve_success() throws Exception {
         // given
         Long userId = 5L;
-        doNothing().when(MockConfig.adminService).approve(userId);
+        doNothing().when(adminService).approve(userId);
 
         // when & then
         mockMvc.perform(post("/api/admin/approvals/{id}/approve", userId))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).approve(userId);
+        verify(adminService).approve(userId);
     }
 
     // ========================= REJECT =========================
@@ -151,27 +156,27 @@ class AdminControllerTest {
     void reject_success() throws Exception {
         // given
         Long userId = 6L;
-        doNothing().when(MockConfig.adminService).reject(userId);
+        doNothing().when(adminService).reject(userId);
 
         // when & then
         mockMvc.perform(post("/api/admin/approvals/{id}/reject", userId))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).reject(userId);
+        verify(adminService).reject(userId);
     }
 
     // ========================= ACTIVE STUDENTS =========================
     @Test
     void activeStudents_success() throws Exception {
         // given
-        when(MockConfig.adminService.getActiveStudents())
+        when(adminService.getActiveStudents())
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/admin/students/active"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getActiveStudents();
+        verify(adminService).getActiveStudents();
     }
 
     // ========================= BLOCK USER =========================
@@ -179,13 +184,13 @@ class AdminControllerTest {
     void block_success() throws Exception {
         // given
         Long userId = 9L;
-        doNothing().when(MockConfig.adminService).blockUser(userId);
+        doNothing().when(adminService).blockUser(userId);
 
         // when & then
         mockMvc.perform(post("/api/admin/students/{id}/block", userId))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).blockUser(userId);
+        verify(adminService).blockUser(userId);
     }
 
     // ========================= UNBLOCK USER =========================
@@ -193,27 +198,27 @@ class AdminControllerTest {
     void unblock_success() throws Exception {
         // given
         Long userId = 10L;
-        doNothing().when(MockConfig.adminService).unblockUser(userId);
+        doNothing().when(adminService).unblockUser(userId);
 
         // when & then
         mockMvc.perform(post("/api/admin/students/{id}/unblock", userId))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).unblockUser(userId);
+        verify(adminService).unblockUser(userId);
     }
 
     // ========================= BLOCKED STUDENTS =========================
     @Test
     void blockedStudents_success() throws Exception {
         // given
-        when(MockConfig.adminService.getBlockedUsers())
+        when(adminService.getBlockedUsers())
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/admin/students/blocked"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getBlockedUsers();
+        verify(adminService).getBlockedUsers();
     }
 
     // ========================= GET USER DETAIL =========================
@@ -221,14 +226,14 @@ class AdminControllerTest {
     void getUserDetail_success() throws Exception {
         // given
         Long userId = 12L;
-        when(MockConfig.adminService.getUserDetail(userId))
+        when(adminService.getUserDetail(userId))
                 .thenReturn(any(AdminUserDetailResponse.class));
 
         // when & then
         mockMvc.perform(get("/api/admin/users/{id}", userId))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getUserDetail(userId);
+        verify(adminService).getUserDetail(userId);
     }
 
     // ========================= UPDATE USER =========================
@@ -246,7 +251,7 @@ class AdminControllerTest {
             }
             """;
 
-        when(MockConfig.adminService.updateUser(eq(userId), any(AdminUpdateUserRequest.class)))
+        when(adminService.updateUser(eq(userId), any(AdminUpdateUserRequest.class)))
                 .thenReturn(any(AdminUserDetailResponse.class));
 
         // when & then
@@ -255,7 +260,7 @@ class AdminControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).updateUser(eq(userId), any(AdminUpdateUserRequest.class));
+        verify(adminService).updateUser(eq(userId), any(AdminUpdateUserRequest.class));
     }
 
     @Test
@@ -272,7 +277,7 @@ class AdminControllerTest {
             }
             """;
 
-        when(MockConfig.adminService.updateUser(eq(userId), any(AdminUpdateUserRequest.class)))
+        when(adminService.updateUser(eq(userId), any(AdminUpdateUserRequest.class)))
                 .thenReturn(any(AdminUserDetailResponse.class));
 
         // when & then
@@ -281,55 +286,55 @@ class AdminControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).updateUser(eq(userId), any(AdminUpdateUserRequest.class));
+        verify(adminService).updateUser(eq(userId), any(AdminUpdateUserRequest.class));
     }
 
     // ========================= ROLE OPTIONS =========================
     @Test
     void roleOptions_success() throws Exception {
         // given
-        when(MockConfig.adminService.getRoleOptions())
+        when(adminService.getRoleOptions())
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/admin/options/roles"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getRoleOptions();
+        verify(adminService).getRoleOptions();
     }
 
     // ========================= CLASS OPTIONS =========================
     @Test
     void classOptions_success() throws Exception {
         // given
-        when(MockConfig.adminService.getClassOptions())
+        when(adminService.getClassOptions())
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/admin/options/classes"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getClassOptions();
+        verify(adminService).getClassOptions();
     }
 
     // ========================= MODULE OPTIONS =========================
     @Test
     void moduleOptions_success() throws Exception {
         // given
-        when(MockConfig.adminService.getModuleOptions())
+        when(adminService.getModuleOptions())
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/admin/options/modules"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.adminService).getModuleOptions();
+        verify(adminService).getModuleOptions();
     }
 
     @Test
     void moduleOptions_emptyList_success() throws Exception {
         // given
-        when(MockConfig.adminService.getModuleOptions())
+        when(adminService.getModuleOptions())
                 .thenReturn(List.of());
 
         // when & then
@@ -337,17 +342,17 @@ class AdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
 
-        verify(MockConfig.adminService).getModuleOptions();
+        verify(adminService).getModuleOptions();
     }
 
     // ========================= MOCK CONFIG =========================
+
+    @TestConfiguration
     static class MockConfig {
-
-        static final AdminService adminService = Mockito.mock(AdminService.class);
-
         @Bean
         AdminService adminService() {
-            return adminService;
+            return Mockito.mock(AdminService.class);
         }
     }
+
 }

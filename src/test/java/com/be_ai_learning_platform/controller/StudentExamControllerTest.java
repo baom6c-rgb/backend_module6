@@ -7,8 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
@@ -18,17 +18,22 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
 @WebMvcTest(StudentExamController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(StudentExamControllerTest.MockConfig.class)
 class StudentExamControllerTest {
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    StudentExamControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private QuestionGenerationService questionGenerationService;
 
     // ========================= GENERATE QUESTIONS =========================
     @Test
@@ -46,7 +51,7 @@ class StudentExamControllerTest {
             }
             """;
 
-        when(MockConfig.questionGenerationService.generate(email, materialId, numberOfQuestions))
+        when(questionGenerationService.generate(email, materialId, numberOfQuestions))
                 .thenReturn(any(GenerateQuestionsResponse.class));
 
         // when & then
@@ -55,7 +60,7 @@ class StudentExamControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.questionGenerationService).generate(email, materialId, numberOfQuestions);
+        verify(questionGenerationService).generate(email, materialId, numberOfQuestions);
     }
 
     @Test
@@ -73,7 +78,7 @@ class StudentExamControllerTest {
             }
             """;
 
-        when(MockConfig.questionGenerationService.generate(email, materialId, numberOfQuestions))
+        when(questionGenerationService.generate(email, materialId, numberOfQuestions))
                 .thenReturn(any(GenerateQuestionsResponse.class));
 
         // when & then
@@ -82,7 +87,7 @@ class StudentExamControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.questionGenerationService).generate(email, materialId, numberOfQuestions);
+        verify(questionGenerationService).generate(email, materialId, numberOfQuestions);
     }
 
     @Test
@@ -100,7 +105,7 @@ class StudentExamControllerTest {
             }
             """;
 
-        when(MockConfig.questionGenerationService.generate(email, materialId, numberOfQuestions))
+        when(questionGenerationService.generate(email, materialId, numberOfQuestions))
                 .thenReturn(any(GenerateQuestionsResponse.class));
 
         // when & then
@@ -109,7 +114,7 @@ class StudentExamControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.questionGenerationService).generate(email, materialId, numberOfQuestions);
+        verify(questionGenerationService).generate(email, materialId, numberOfQuestions);
     }
 
     @Test
@@ -128,7 +133,7 @@ class StudentExamControllerTest {
                         .content(requestJson))
                 .andExpect(status().isUnauthorized());
 
-        verify(MockConfig.questionGenerationService, never()).generate(anyString(), anyLong(), anyInt());
+        verify(questionGenerationService, never()).generate(anyString(), anyLong(), anyInt());
     }
 
     @Test
@@ -146,7 +151,7 @@ class StudentExamControllerTest {
             }
             """;
 
-        when(MockConfig.questionGenerationService.generate(email, materialId, numberOfQuestions))
+        when(questionGenerationService.generate(email, materialId, numberOfQuestions))
                 .thenThrow(new RuntimeException("Material not found"));
 
         // when & then
@@ -155,18 +160,17 @@ class StudentExamControllerTest {
                         .content(requestJson))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.questionGenerationService).generate(email, materialId, numberOfQuestions);
+        verify(questionGenerationService).generate(email, materialId, numberOfQuestions);
     }
 
     // ========================= MOCK CONFIG =========================
+
+    @TestConfiguration
     static class MockConfig {
-
-        static final QuestionGenerationService questionGenerationService =
-                Mockito.mock(QuestionGenerationService.class);
-
         @Bean
         QuestionGenerationService questionGenerationService() {
-            return questionGenerationService;
+            return Mockito.mock(QuestionGenerationService.class);
         }
     }
+
 }

@@ -7,8 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -17,43 +17,48 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
 @WebMvcTest(AdminSettingsController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(AdminSettingsControllerTest.MockConfig.class)
 class AdminSettingsControllerTest {
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    AdminSettingsControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private SystemSettingsService systemSettingsService;
 
     // ========================= GET SETTINGS =========================
     @Test
     void get_success() throws Exception {
         // given
-        when(MockConfig.systemSettingsService.get())
+        when(systemSettingsService.get())
                 .thenReturn(any(SystemSettingsResponse.class));
 
         // when & then
         mockMvc.perform(get("/api/admin/settings"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.systemSettingsService).get();
+        verify(systemSettingsService).get();
     }
 
     @Test
     void get_serviceThrowsException_returnError() throws Exception {
         // given
-        when(MockConfig.systemSettingsService.get())
+        when(systemSettingsService.get())
                 .thenThrow(new RuntimeException("Settings not found"));
 
         // when & then
         mockMvc.perform(get("/api/admin/settings"))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.systemSettingsService).get();
+        verify(systemSettingsService).get();
     }
 
     // ========================= UPDATE SETTINGS =========================
@@ -68,7 +73,7 @@ class AdminSettingsControllerTest {
             }
             """;
 
-        when(MockConfig.systemSettingsService.update(any(UpdateSystemSettingsRequest.class)))
+        when(systemSettingsService.update(any(UpdateSystemSettingsRequest.class)))
                 .thenReturn(any(SystemSettingsResponse.class));
 
         // when & then
@@ -77,7 +82,7 @@ class AdminSettingsControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.systemSettingsService).update(any(UpdateSystemSettingsRequest.class));
+        verify(systemSettingsService).update(any(UpdateSystemSettingsRequest.class));
     }
 
     @Test
@@ -91,7 +96,7 @@ class AdminSettingsControllerTest {
             }
             """;
 
-        when(MockConfig.systemSettingsService.update(any(UpdateSystemSettingsRequest.class)))
+        when(systemSettingsService.update(any(UpdateSystemSettingsRequest.class)))
                 .thenReturn(any(SystemSettingsResponse.class));
 
         // when & then
@@ -100,7 +105,7 @@ class AdminSettingsControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.systemSettingsService).update(any(UpdateSystemSettingsRequest.class));
+        verify(systemSettingsService).update(any(UpdateSystemSettingsRequest.class));
     }
 
     @Test
@@ -114,7 +119,7 @@ class AdminSettingsControllerTest {
             }
             """;
 
-        when(MockConfig.systemSettingsService.update(any(UpdateSystemSettingsRequest.class)))
+        when(systemSettingsService.update(any(UpdateSystemSettingsRequest.class)))
                 .thenThrow(new RuntimeException("Update failed"));
 
         // when & then
@@ -123,17 +128,17 @@ class AdminSettingsControllerTest {
                         .content(requestJson))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.systemSettingsService).update(any(UpdateSystemSettingsRequest.class));
+        verify(systemSettingsService).update(any(UpdateSystemSettingsRequest.class));
     }
 
     // ========================= MOCK CONFIG =========================
+
+    @TestConfiguration
     static class MockConfig {
-
-        static final SystemSettingsService systemSettingsService = Mockito.mock(SystemSettingsService.class);
-
         @Bean
         SystemSettingsService systemSettingsService() {
-            return systemSettingsService;
+            return Mockito.mock(SystemSettingsService.class);
         }
     }
+
 }

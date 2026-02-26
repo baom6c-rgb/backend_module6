@@ -12,8 +12,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -24,17 +24,31 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
 @WebMvcTest(AuthController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(AuthControllerTest.MockConfig.class)
 class AuthControllerTest {
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    AuthControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private AuthService authService;
+
+    @Autowired
+    private GoogleAuthService googleAuthService;
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    @Autowired
+    private UserRoleRepository userRoleRepository;
 
     // ========================= REGISTER =========================
     @Test
@@ -63,11 +77,11 @@ class AuthControllerTest {
         user.setEmail("test@gmail.com");
         user.setStatus(UserStatus.ACTIVE);
 
-        Mockito.when(MockConfig.authService.login(any()))
+        Mockito.when(authService.login(any()))
                 .thenReturn(user);
-        Mockito.when(MockConfig.userRoleRepository.findRoleNamesByUserId(1L))
+        Mockito.when(userRoleRepository.findRoleNamesByUserId(1L))
                 .thenReturn(List.of("STUDENT"));
-        Mockito.when(MockConfig.jwtUtil.generateToken(anyString(), any()))
+        Mockito.when(jwtUtil.generateToken(anyString(), any()))
                 .thenReturn("jwt-token");
 
         mockMvc.perform(post("/api/auth/login")
@@ -90,11 +104,11 @@ class AuthControllerTest {
         user.setEmail("wait@gmail.com");
         user.setStatus(UserStatus.WAITING_APPROVAL);
 
-        Mockito.when(MockConfig.authService.login(any()))
+        Mockito.when(authService.login(any()))
                 .thenReturn(user);
-        Mockito.when(MockConfig.userRoleRepository.findRoleNamesByUserId(2L))
+        Mockito.when(userRoleRepository.findRoleNamesByUserId(2L))
                 .thenReturn(List.of("STUDENT"));
-        Mockito.when(MockConfig.jwtUtil.generateToken(anyString(), any()))
+        Mockito.when(jwtUtil.generateToken(anyString(), any()))
                 .thenReturn("waiting-token");
 
         mockMvc.perform(post("/api/auth/login")
@@ -122,11 +136,11 @@ class AuthControllerTest {
         user.setEmail("google@gmail.com");
         user.setStatus(UserStatus.ACTIVE);
 
-        Mockito.when(MockConfig.googleAuthService.authenticate(any()))
+        Mockito.when(googleAuthService.authenticate(any()))
                 .thenReturn(user);
-        Mockito.when(MockConfig.userRoleRepository.findRoleNamesByUserId(3L))
+        Mockito.when(userRoleRepository.findRoleNamesByUserId(3L))
                 .thenReturn(List.of("STUDENT"));
-        Mockito.when(MockConfig.jwtUtil.generateToken(anyString(), any()))
+        Mockito.when(jwtUtil.generateToken(anyString(), any()))
                 .thenReturn("google-token");
 
         mockMvc.perform(post("/api/auth/google")
@@ -140,31 +154,28 @@ class AuthControllerTest {
     }
 
     // ========================= MOCK CONFIG =========================
+
+    @TestConfiguration
     static class MockConfig {
-
-        static final AuthService authService = Mockito.mock(AuthService.class);
-        static final GoogleAuthService googleAuthService = Mockito.mock(GoogleAuthService.class);
-        static final JwtUtil jwtUtil = Mockito.mock(JwtUtil.class);
-        static final UserRoleRepository userRoleRepository = Mockito.mock(UserRoleRepository.class);
-
         @Bean
         AuthService authService() {
-            return authService;
+            return Mockito.mock(AuthService.class);
         }
 
         @Bean
         GoogleAuthService googleAuthService() {
-            return googleAuthService;
+            return Mockito.mock(GoogleAuthService.class);
         }
 
         @Bean
         JwtUtil jwtUtil() {
-            return jwtUtil;
+            return Mockito.mock(JwtUtil.class);
         }
 
         @Bean
         UserRoleRepository userRoleRepository() {
-            return userRoleRepository;
+            return Mockito.mock(UserRoleRepository.class);
         }
     }
+
 }
