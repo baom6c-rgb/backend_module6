@@ -25,15 +25,46 @@ public class PromptBuilder {
     private static final int ESSAY_SAMPLE_MAX = 480;
 
     /**
-     * ✅ Count được truyền từ SystemSettings (admin set).
-     * totalQuestions = mcqCount + essayCount (validate ở service rồi).
+     * ✅ Backward-compatible: giữ nguyên signature cũ.
+     * Nếu chưa có focusText thì generate theo toàn bộ material như trước.
      */
     public String buildPrompt(String materialText, int mcqCount, int essayCount) {
+        return buildPrompt(materialText, mcqCount, essayCount, null);
+    }
+
+    /**
+     * ✅ NEW: Normal practice có thêm focusText.
+     * - focusText dùng khi user chọn 1 hoặc nhiều nội dung muốn luyện tập.
+     * - Không thay đổi các rule khác, chỉ thêm "FOCUS AREAS" và yêu cầu ưu tiên bám sát focus.
+     *
+     * totalQuestions = mcqCount + essayCount (validate ở service rồi).
+     */
+    public String buildPrompt(String materialText, int mcqCount, int essayCount, String focusText) {
         String material = normalizeAndTrim(materialText, MAX_MATERIAL_CHARS);
+
+        String focus = normalizeAndTrim(focusText, MAX_FOCUS_CHARS);
+        boolean hasFocus = !focus.isBlank();
 
         int mcq = Math.max(0, mcqCount);
         int essay = Math.max(0, essayCount);
         int totalQuestions = mcq + essay;
+
+        String focusBlock = hasFocus
+                ? """
+                
+FOCUS AREAS (ƯU TIÊN BẮT BUỘC):
+- Người học đã chọn các phần muốn luyện tập dưới đây.
+- Hãy ƯU TIÊN tạo câu hỏi xoay quanh FOCUS AREAS.
+- Tránh hỏi lan man ngoài FOCUS AREAS, trừ khi cần 1-2 câu để nối ngữ cảnh.
+- Tuy nhiên: vẫn chỉ được dùng thông tin có trong TÀI LIỆU (không dùng kiến thức ngoài).
+- Nếu FOCUS AREAS quá ngắn/thiếu dữ kiện, hãy tạo câu hỏi dựa trên phần liên quan nhất trong TÀI LIỆU,
+  nhưng vẫn cố gắng bám sát ý định của FOCUS AREAS.
+
+\"\"\"
+%s
+\"\"\"
+""".formatted(focus)
+                : "";
 
         return """
 Bạn là hệ thống tạo đề luyện tập cho HỌC VIÊN dựa DUY NHẤT vào tài liệu bên dưới.
@@ -42,7 +73,7 @@ MỤC TIÊU (RẤT QUAN TRỌNG):
 - Không chỉ kiểm tra trí nhớ. Ưu tiên câu hỏi giúp học viên HIỂU và VẬN DỤNG.
 - Câu hỏi nên theo kiểu MỞ RỘNG nhưng vẫn BÁM SÁT nội dung tài liệu (không dùng kiến thức ngoài).
 - Có thể chèn code/config ngắn trong câu hỏi (nếu phù hợp) để học viên tự chạy/thử và kiểm tra hiểu bài.
-
+%s
 NHIỆM VỤ:
 - Tạo CHÍNH XÁC %d câu hỏi, gồm:
   - %d câu TRẮC NGHIỆM (MCQ)
@@ -120,6 +151,7 @@ TÀI LIỆU:
 %s
 \"\"\"
 """.formatted(
+                focusBlock,
                 totalQuestions,
                 mcq,
                 essay,

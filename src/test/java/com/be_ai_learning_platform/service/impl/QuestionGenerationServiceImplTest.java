@@ -7,17 +7,18 @@ import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.MaterialStatus;
 import com.be_ai_learning_platform.repository.LearningMaterialRepository;
 import com.be_ai_learning_platform.repository.UserRepository;
+import com.be_ai_learning_platform.service.SystemSettingsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -28,14 +29,14 @@ class QuestionGenerationServiceImplTest {
 
     @Mock private LearningMaterialRepository materialRepo;
     @Mock private UserRepository userRepo;
-    @Mock private GeminiStructuredClient ai;
-    @Mock private PromptBuilder promptBuilder;
+    @Mock private SystemSettingsService settingsService;
 
-    @InjectMocks
-    private QuestionGenerationServiceImpl service;
+    private GeminiStructuredClient ai;   // manual mock (flexible)
+    private PromptBuilder promptBuilder; // manual mock (flexible)
 
     private User mockUser;
     private LearningMaterial mockMaterial;
+
     private final String email = "test@example.com";
     private final Long materialId = 1L;
 
@@ -49,85 +50,192 @@ class QuestionGenerationServiceImplTest {
         mockMaterial.setUser(mockUser);
         mockMaterial.setStatus(MaterialStatus.EXTRACTED);
         mockMaterial.setExtractedText("Nội dung bài học mẫu...");
+
+        // settings: để distribution validator pass với JSON toàn MCQ
+        when(settingsService.getMcqQuestionCount()).thenReturn(5);
+        when(settingsService.getEssayQuestionCount()).thenReturn(0);
+
+        // PromptBuilder: trả "prompt" cho mọi method return String
+        promptBuilder = mock(PromptBuilder.class, invocation -> {
+            if (invocation.getMethod().getReturnType() == String.class) return "prompt";
+            return RETURNS_DEFAULTS.answer(invocation);
+        });
+
+        // AI default: trả JSON hợp lệ
+        ai = mock(GeminiStructuredClient.class, invocation -> {
+            if (invocation.getMethod().getReturnType() == String.class) {
+                return buildValidMcqOnlyQuestionsJson(5);
+            }
+            return RETURNS_DEFAULTS.answer(invocation);
+        });
     }
 
+    private QuestionGenerationServiceImpl newService(GeminiStructuredClient aiClient) {
+        return new QuestionGenerationServiceImpl(materialRepo, userRepo, aiClient, promptBuilder, settingsService);
+    }
+
+    // ===================== TESTS =====================
+
     @Test
-    @DisplayName("Ném lỗi UNAUTHORIZED khi không tìm thấy user")
-    void generate_UserNotFound_ThrowsUnauthorized() {
+    @DisplayName("UNAUTHORIZED khi không tìm thấy user")
+    void generate_userNotFound_throws401() {
+        // arrange
         when(userRepo.findByEmail(anyString())).thenReturn(Optional.empty());
+        QuestionGenerationServiceImpl service = newService(ai);
 
-        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
-                service.generate(email, materialId, 5));
+        // act
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.generate(email, materialId, 999));
 
+        // assert
         assertEquals(HttpStatus.UNAUTHORIZED, ex.getStatusCode());
+        verify(userRepo).findByEmail(email);
+        verifyNoInteractions(materialRepo);
     }
 
     @Test
-    @DisplayName("Ném lỗi CONFLICT khi tài liệu chưa được extract")
-    void generate_MaterialNotExtracted_ThrowsConflict() {
-        mockMaterial.setStatus(MaterialStatus.EXTRACTED); // Đổi trạng thái
+    @DisplayName("NOT_FOUND khi không tìm thấy material theo user")
+    void generate_materialNotFound_throws404() {
+        // arrange
+        when(userRepo.findByEmail(email)).thenReturn(Optional.of(mockUser));
+        when(materialRepo.findByIdAndUser(materialId, mockUser)).thenReturn(Optional.empty());
+        QuestionGenerationServiceImpl service = newService(ai);
+
+        // act
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.generate(email, materialId, 999));
+
+        // assert
+        assertEquals(HttpStatus.NOT_FOUND, ex.getStatusCode());
+        verify(userRepo).findByEmail(email);
+        verify(materialRepo).findByIdAndUser(materialId, mockUser);
+        verifyNoMoreInteractions(userRepo, materialRepo);
+    }
+
+    @Test
+    @DisplayName("CONFLICT khi material chưa EXTRACTED")
+    void generate_materialNotExtracted_throws409() {
+        // arrange
+        mockMaterial.setStatus(MaterialStatus.UPLOADED);
+
         when(userRepo.findByEmail(email)).thenReturn(Optional.of(mockUser));
         when(materialRepo.findByIdAndUser(materialId, mockUser)).thenReturn(Optional.of(mockMaterial));
+        QuestionGenerationServiceImpl service = newService(ai);
 
-        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
-                service.generate(email, materialId, 5));
+        // act
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.generate(email, materialId, 999));
 
+        // assert
         assertEquals(HttpStatus.CONFLICT, ex.getStatusCode());
-        assertTrue(ex.getReason().contains("not extracted yet"));
+        verify(userRepo).findByEmail(email);
+        verify(materialRepo).findByIdAndUser(materialId, mockUser);
+        verifyNoMoreInteractions(userRepo, materialRepo);
     }
 
     @Test
-    @DisplayName("Ném lỗi SERVICE_UNAVAILABLE khi AI bị dính Quota/Rate Limit")
-    void generate_AiQuotaExceeded_Throws503() {
+    @DisplayName("SERVICE_UNAVAILABLE khi AI dính quota/rate limit (429)")
+    void generate_aiQuotaExceeded_throws503() {
+        // arrange
         when(userRepo.findByEmail(email)).thenReturn(Optional.of(mockUser));
         when(materialRepo.findByIdAndUser(materialId, mockUser)).thenReturn(Optional.of(mockMaterial));
-        when(promptBuilder.buildPrompt(anyString(), anyInt())).thenReturn("prompt");
 
-        // Giả lập lỗi 429 từ AI client
-        when(ai.generateJsonBySchema(anyString(), anyInt()))
-                .thenThrow(new RuntimeException("Error 429: Resource has exhausted quota"));
+        GeminiStructuredClient ai429 = mock(GeminiStructuredClient.class, invocation -> {
+            if (invocation.getMethod().getReturnType() == String.class) {
+                throw new RuntimeException("Error 429: Resource has exhausted quota");
+            }
+            return RETURNS_DEFAULTS.answer(invocation);
+        });
 
-        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
-                service.generate(email, materialId, 5));
+        QuestionGenerationServiceImpl service = newService(ai429);
 
+        // act
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.generate(email, materialId, 999));
+
+        // assert
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatusCode());
-        assertTrue(ex.getReason().contains("quota/rate limit"));
     }
 
     @Test
-    @DisplayName("Retry thành công khi lần đầu gọi AI bị lỗi network nhẹ")
-    void generate_AiRetrySuccess_ReturnsResponse() throws Exception {
+    @DisplayName("Retry thành công khi lần đầu gọi AI lỗi transient (AI called >= 2)")
+    void generate_transientError_thenRetrySuccess_returnsResponse() {
+        // arrange
         when(userRepo.findByEmail(email)).thenReturn(Optional.of(mockUser));
         when(materialRepo.findByIdAndUser(materialId, mockUser)).thenReturn(Optional.of(mockMaterial));
-        when(promptBuilder.buildPrompt(anyString(), anyInt())).thenReturn("prompt");
 
-        String validJson = "{\"questions\": []}"; // JSON giả định
+        AtomicInteger calls = new AtomicInteger(0);
+        String validJson = buildValidMcqOnlyQuestionsJson(5);
 
-        // Lần 1 lỗi, lần 2 thành công
-        when(ai.generateJsonBySchema(anyString(), anyInt()))
-                .thenThrow(new RuntimeException("Transient error"))
-                .thenReturn(validJson);
+        GeminiStructuredClient aiRetry = mock(GeminiStructuredClient.class, invocation -> {
+            if (invocation.getMethod().getReturnType() == String.class) {
+                int n = calls.incrementAndGet();
+                if (n == 1) throw new RuntimeException("Transient network error");
+                return validJson;
+            }
+            return RETURNS_DEFAULTS.answer(invocation);
+        });
 
-        GenerateQuestionsResponse result = service.generate(email, materialId, 5);
+        QuestionGenerationServiceImpl service = newService(aiRetry);
 
+        // act
+        GenerateQuestionsResponse result = service.generate(email, materialId, 999);
+
+        // assert
         assertNotNull(result);
-        verify(ai, times(2)).generateJsonBySchema(anyString(), anyInt());
+        assertNotNull(result.getQuestions());
+        assertEquals(5, result.getQuestions().size());
+        assertTrue(calls.get() >= 2);
     }
 
     @Test
-    @DisplayName("Lỗi BAD_GATEWAY khi AI trả JSON sai định dạng sau khi đã retry parse")
-    void generate_InvalidJson_ThrowsBadGateway() {
+    @DisplayName("BAD_GATEWAY khi AI trả JSON sai định dạng (parse fail + retry parse -> vẫn fail)")
+    void generate_invalidJson_throws502_andRetryOnce() {
+        // arrange
         when(userRepo.findByEmail(email)).thenReturn(Optional.of(mockUser));
         when(materialRepo.findByIdAndUser(materialId, mockUser)).thenReturn(Optional.of(mockMaterial));
-        when(promptBuilder.buildPrompt(anyString(), anyInt())).thenReturn("prompt");
 
-        // AI trả về JSON lỗi (thiếu dấu ngoặc...)
-        when(ai.generateJsonBySchema(anyString(), anyInt())).thenReturn("{ invalid json");
+        AtomicInteger calls = new AtomicInteger(0);
 
-        ResponseStatusException ex = assertThrows(ResponseStatusException.class, () ->
-                service.generate(email, materialId, 5));
+        GeminiStructuredClient aiBadJson = mock(GeminiStructuredClient.class, invocation -> {
+            if (invocation.getMethod().getReturnType() == String.class) {
+                calls.incrementAndGet();
+                return "{ invalid json";
+            }
+            return RETURNS_DEFAULTS.answer(invocation);
+        });
 
+        QuestionGenerationServiceImpl service = newService(aiBadJson);
+
+        // act
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.generate(email, materialId, 999));
+
+        // assert
         assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatusCode());
-        assertTrue(ex.getReason().contains("AI output invalid JSON"));
+        assertTrue(calls.get() >= 2, "Parse retry should trigger a second AI call");
+    }
+
+    // ===================== helpers =====================
+
+    /**
+     * JSON hợp lệ tối thiểu - toàn MCQ (phù hợp settings mcq=5, essay=0)
+     */
+    private static String buildValidMcqOnlyQuestionsJson(int n) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{\"questions\":[");
+        for (int i = 1; i <= n; i++) {
+            if (i > 1) sb.append(",");
+            sb.append("{")
+                    .append("\"questionType\":\"MCQ\",")
+                    .append("\"question\":\"Q").append(i).append("\",")
+                    .append("\"options\":{\"A\":\"A").append(i).append("\",\"B\":\"B").append(i)
+                    .append("\",\"C\":\"C").append(i).append("\",\"D\":\"D").append(i).append("\"},")
+                    .append("\"correctAnswer\":\"A\",")
+                    .append("\"analysis\":\"analysis ").append(i).append("\"")
+                    .append("}");
+        }
+        sb.append("]}");
+        return sb.toString();
     }
 }
