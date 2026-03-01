@@ -448,10 +448,10 @@ public class PracticeServiceImpl implements PracticeService {
             formatted = aiPracticeFeedbackService.generateFeedback(me.getFullName(), scorePct, feedbackItems);
         } catch (Exception ex) {
             formatted = "Chào " + (me.getFullName() == null ? "bạn" : me.getFullName().trim()) + ",\n\n"
-                    + "Điểm mạnh\n"
-                    + "* **Tổng quan kết quả:** Bạn đã hoàn thành bài và đạt " + scorePct + "/100.\n\n"
-                    + "Điểm yếu\n"
-                    + "* **Cần củng cố:** Hãy xem lại các câu sai trong phần “Xem lại đáp án” để hiểu đúng bản chất.\n";
+                    + "Highlights\n"
+                    + "Bạn đã hoàn thành bài và đạt " + scorePct + "/100. Việc hoàn thành bài là tốt, giờ chỉ cần tối ưu phần ôn tập theo lỗi sai.\n\n"
+                    + "Focus areas\n"
+                    + "Hãy tập trung vào các câu sai quan trọng nhất: xác định bạn nhầm keyword nào và kiến thức đúng là gì. Sau đó làm thêm vài câu cùng chủ đề để khóa lại kiến thức.";
         }
 
 // ✅ Study guide: LAZY-LOAD (chỉ generate khi user bấm "Hướng dẫn ôn tập")
@@ -964,10 +964,10 @@ public class PracticeServiceImpl implements PracticeService {
             formatted = aiPracticeFeedbackService.generateFeedback(session.userFullName, scorePct, feedbackItems);
         } catch (Exception ex) {
             formatted = "Chào " + (session.userFullName == null ? "bạn" : session.userFullName.trim()) + ",\n\n"
-                    + "Điểm mạnh\n"
-                    + "* **Tổng quan kết quả:** Bạn đã hoàn thành bài và đạt " + scorePct + "/100.\n\n"
-                    + "Điểm yếu\n"
-                    + "* **Cần củng cố:** Hãy xem lại các câu sai để xác định keyword và kiến thức đúng.\n";
+                    +"Highlights\n"
+                    + "Bạn đã hoàn thành bài và đạt " + scorePct + "/100. Hãy tiếp tục luyện tập có mục tiêu để cải thiện dần độ chắc kiến thức.\n\n"
+                    + "Focus areas\n"
+                    + "Hãy xem lại các câu sai và tập trung vào 1–2 chủ đề bạn sai nhiều nhất. Khi ôn, chốt lại bản chất khái niệm đúng và làm thêm vài câu cùng chủ đề để tránh lặp lỗi.";
         }
 
         // ✅ Study guide: LAZY-LOAD (chỉ generate khi user bấm "Hướng dẫn ôn tập")
