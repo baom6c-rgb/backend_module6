@@ -5,6 +5,8 @@ import com.be_ai_learning_platform.dto.response.GeneratedQuestionItemResponse;
 import com.be_ai_learning_platform.entity.enums.QuestionType;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -14,6 +16,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@ExtendWith(MockitoExtension.class)
 class QuestionValidatorTest {
 
     @Test

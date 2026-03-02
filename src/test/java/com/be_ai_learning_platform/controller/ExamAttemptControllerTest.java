@@ -9,8 +9,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,17 +22,25 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
 @WebMvcTest(ExamAttemptController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(ExamAttemptControllerTest.MockConfig.class)
 class ExamAttemptControllerTest {
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    ExamAttemptControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private ExamAttemptService examAttemptService;
+
+    @Autowired
+    private UserRepository userRepository;
 
     // ========================= GET MY ATTEMPTS =========================
     @Test
@@ -44,17 +52,17 @@ class ExamAttemptControllerTest {
         user.setId(1L);
         user.setEmail(email);
 
-        when(MockConfig.userRepository.findByEmail(email))
+        when(userRepository.findByEmail(email))
                 .thenReturn(Optional.of(user));
-        when(MockConfig.examAttemptService.getMyAttempts(1L))
+        when(examAttemptService.getMyAttempts(1L))
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/exam-attempts/my-attempts"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.userRepository).findByEmail(email);
-        verify(MockConfig.examAttemptService).getMyAttempts(1L);
+        verify(userRepository).findByEmail(email);
+        verify(examAttemptService).getMyAttempts(1L);
     }
 
     @Test
@@ -63,15 +71,15 @@ class ExamAttemptControllerTest {
         // given
         String email = "student@test.com";
 
-        when(MockConfig.userRepository.findByEmail(email))
+        when(userRepository.findByEmail(email))
                 .thenReturn(Optional.empty());
 
         // when & then
         mockMvc.perform(get("/api/exam-attempts/my-attempts"))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.userRepository).findByEmail(email);
-        verify(MockConfig.examAttemptService, never()).getMyAttempts(anyLong());
+        verify(userRepository).findByEmail(email);
+        verify(examAttemptService, never()).getMyAttempts(anyLong());
     }
 
     @Test
@@ -80,8 +88,8 @@ class ExamAttemptControllerTest {
         mockMvc.perform(get("/api/exam-attempts/my-attempts"))
                 .andExpect(status().isUnauthorized());
 
-        verify(MockConfig.userRepository, never()).findByEmail(anyString());
-        verify(MockConfig.examAttemptService, never()).getMyAttempts(anyLong());
+        verify(userRepository, never()).findByEmail(anyString());
+        verify(examAttemptService, never()).getMyAttempts(anyLong());
     }
 
     // ========================= GET STATS =========================
@@ -93,7 +101,7 @@ class ExamAttemptControllerTest {
         mockStats.put("averageScore", 85.5);
         mockStats.put("ranking", 5);
 
-        when(MockConfig.examAttemptService.getExamStats(1L))
+        when(examAttemptService.getExamStats(1L))
                 .thenReturn(mockStats);
 
         // when & then
@@ -103,20 +111,20 @@ class ExamAttemptControllerTest {
                 .andExpect(jsonPath("$.averageScore").value(85.5))
                 .andExpect(jsonPath("$.ranking").value(5));
 
-        verify(MockConfig.examAttemptService).getExamStats(1L);
+        verify(examAttemptService).getExamStats(1L);
     }
 
     @Test
     void getStats_emptyStats_success() throws Exception {
         // given
-        when(MockConfig.examAttemptService.getExamStats(1L))
+        when(examAttemptService.getExamStats(1L))
                 .thenReturn(new HashMap<>());
 
         // when & then
         mockMvc.perform(get("/api/exam-attempts/stats"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.examAttemptService).getExamStats(1L);
+        verify(examAttemptService).getExamStats(1L);
     }
 
     // ========================= GET DETAIL =========================
@@ -126,14 +134,14 @@ class ExamAttemptControllerTest {
         Long attemptId = 123L;
         ExamAttempt mockAttempt = new ExamAttempt();
 
-        when(MockConfig.examAttemptService.getAttemptById(attemptId))
+        when(examAttemptService.getAttemptById(attemptId))
                 .thenReturn(mockAttempt);
 
         // when & then
         mockMvc.perform(get("/api/exam-attempts/{id}", attemptId))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.examAttemptService).getAttemptById(attemptId);
+        verify(examAttemptService).getAttemptById(attemptId);
     }
 
     @Test
@@ -141,14 +149,14 @@ class ExamAttemptControllerTest {
         // given
         Long attemptId = 999L;
 
-        when(MockConfig.examAttemptService.getAttemptById(attemptId))
+        when(examAttemptService.getAttemptById(attemptId))
                 .thenThrow(new RuntimeException("Attempt not found"));
 
         // when & then
         mockMvc.perform(get("/api/exam-attempts/{id}", attemptId))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.examAttemptService).getAttemptById(attemptId);
+        verify(examAttemptService).getAttemptById(attemptId);
     }
 
     // ========================= GET ALL ATTEMPTS (ADMIN) =========================
@@ -156,14 +164,14 @@ class ExamAttemptControllerTest {
     @WithMockUser(username = "admin@test.com", roles = {"ADMIN"})
     void getAllAttempts_asAdmin_success() throws Exception {
         // given
-        when(MockConfig.examAttemptService.getAllAttemptsForAdmin())
+        when(examAttemptService.getAllAttemptsForAdmin())
                 .thenReturn(List.of());
 
         // when & then
         mockMvc.perform(get("/api/exam-attempts/admin/all-attempts"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.examAttemptService).getAllAttemptsForAdmin();
+        verify(examAttemptService).getAllAttemptsForAdmin();
     }
 
     @Test
@@ -173,7 +181,7 @@ class ExamAttemptControllerTest {
         mockMvc.perform(get("/api/exam-attempts/admin/all-attempts"))
                 .andExpect(status().isForbidden());
 
-        verify(MockConfig.examAttemptService, never()).getAllAttemptsForAdmin();
+        verify(examAttemptService, never()).getAllAttemptsForAdmin();
     }
 
     @Test
@@ -182,7 +190,7 @@ class ExamAttemptControllerTest {
         mockMvc.perform(get("/api/exam-attempts/admin/all-attempts"))
                 .andExpect(status().isUnauthorized());
 
-        verify(MockConfig.examAttemptService, never()).getAllAttemptsForAdmin();
+        verify(examAttemptService, never()).getAllAttemptsForAdmin();
     }
 
     // ========================= START EXAM =========================
@@ -197,7 +205,7 @@ class ExamAttemptControllerTest {
             """;
 
         ExamAttempt mockAttempt = new ExamAttempt();
-        when(MockConfig.examAttemptService.startExam(1L, examId))
+        when(examAttemptService.startExam(1L, examId))
                 .thenReturn(mockAttempt);
 
         // when & then
@@ -206,7 +214,7 @@ class ExamAttemptControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.examAttemptService).startExam(1L, examId);
+        verify(examAttemptService).startExam(1L, examId);
     }
 
     @Test
@@ -220,7 +228,7 @@ class ExamAttemptControllerTest {
             """;
 
         ExamAttempt mockAttempt = new ExamAttempt();
-        when(MockConfig.examAttemptService.startExam(1L, examId))
+        when(examAttemptService.startExam(1L, examId))
                 .thenReturn(mockAttempt);
 
         // when & then
@@ -229,7 +237,7 @@ class ExamAttemptControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.examAttemptService).startExam(1L, examId);
+        verify(examAttemptService).startExam(1L, examId);
     }
 
     @Test
@@ -242,7 +250,7 @@ class ExamAttemptControllerTest {
             }
             """;
 
-        when(MockConfig.examAttemptService.startExam(1L, examId))
+        when(examAttemptService.startExam(1L, examId))
                 .thenThrow(new RuntimeException("Exam not found"));
 
         // when & then
@@ -251,7 +259,7 @@ class ExamAttemptControllerTest {
                         .content(requestJson))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.examAttemptService).startExam(1L, examId);
+        verify(examAttemptService).startExam(1L, examId);
     }
 
     // ========================= SUBMIT EXAM =========================
@@ -269,7 +277,7 @@ class ExamAttemptControllerTest {
             """;
 
         ExamAttempt mockAttempt = new ExamAttempt();
-        when(MockConfig.examAttemptService.submitExam(eq(attemptId), any()))
+        when(examAttemptService.submitExam(eq(attemptId), any()))
                 .thenReturn(mockAttempt);
 
         // when & then
@@ -278,7 +286,7 @@ class ExamAttemptControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.examAttemptService).submitExam(eq(attemptId), any());
+        verify(examAttemptService).submitExam(eq(attemptId), any());
     }
 
     @Test
@@ -292,7 +300,7 @@ class ExamAttemptControllerTest {
             """;
 
         ExamAttempt mockAttempt = new ExamAttempt();
-        when(MockConfig.examAttemptService.submitExam(eq(attemptId), any()))
+        when(examAttemptService.submitExam(eq(attemptId), any()))
                 .thenReturn(mockAttempt);
 
         // when & then
@@ -301,7 +309,7 @@ class ExamAttemptControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.examAttemptService).submitExam(eq(attemptId), any());
+        verify(examAttemptService).submitExam(eq(attemptId), any());
     }
 
     @Test
@@ -314,7 +322,7 @@ class ExamAttemptControllerTest {
             }
             """;
 
-        when(MockConfig.examAttemptService.submitExam(eq(attemptId), any()))
+        when(examAttemptService.submitExam(eq(attemptId), any()))
                 .thenThrow(new RuntimeException("Attempt not found"));
 
         // when & then
@@ -323,7 +331,7 @@ class ExamAttemptControllerTest {
                         .content(requestJson))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.examAttemptService).submitExam(eq(attemptId), any());
+        verify(examAttemptService).submitExam(eq(attemptId), any());
     }
 
     @Test
@@ -336,7 +344,7 @@ class ExamAttemptControllerTest {
             }
             """;
 
-        when(MockConfig.examAttemptService.submitExam(eq(attemptId), any()))
+        when(examAttemptService.submitExam(eq(attemptId), any()))
                 .thenThrow(new RuntimeException("Invalid answers format"));
 
         // when & then
@@ -345,23 +353,22 @@ class ExamAttemptControllerTest {
                         .content(requestJson))
                 .andExpect(status().is5xxServerError());
 
-        verify(MockConfig.examAttemptService).submitExam(eq(attemptId), any());
+        verify(examAttemptService).submitExam(eq(attemptId), any());
     }
 
     // ========================= MOCK CONFIG =========================
+
+    @TestConfiguration
     static class MockConfig {
-
-        static final ExamAttemptService examAttemptService = Mockito.mock(ExamAttemptService.class);
-        static final UserRepository userRepository = Mockito.mock(UserRepository.class);
-
         @Bean
         ExamAttemptService examAttemptService() {
-            return examAttemptService;
+            return Mockito.mock(ExamAttemptService.class);
         }
 
         @Bean
         UserRepository userRepository() {
-            return userRepository;
+            return Mockito.mock(UserRepository.class);
         }
     }
+
 }

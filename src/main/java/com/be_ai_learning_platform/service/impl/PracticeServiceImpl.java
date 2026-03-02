@@ -38,6 +38,7 @@ import com.be_ai_learning_platform.repository.QuestionRepository;
 import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.PracticeService;
 import com.be_ai_learning_platform.service.AiStudyGuideService;
+import com.be_ai_learning_platform.service.AiPracticeFeedbackService;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
 import com.be_ai_learning_platform.service.SystemSettingsService;
 import com.be_ai_learning_platform.service.TopicSelectionService;
@@ -86,6 +87,7 @@ public class PracticeServiceImpl implements PracticeService {
 
     private final GeminiResponsesClient responsesClient;
     private final AiStudyGuideService aiStudyGuideService;
+    private final AiPracticeFeedbackService aiPracticeFeedbackService;
     private final ObjectMapper om;
     private final Cache<String, Object> practiceSessionCache;
 
@@ -115,7 +117,8 @@ public class PracticeServiceImpl implements PracticeService {
             Cache<String, Object> practiceSessionCache,
             SystemSettingsService settingsService,
             TopicSelectionService topicSelectionService,
-            AiStudyGuideService aiStudyGuideService
+            AiStudyGuideService aiStudyGuideService,
+            AiPracticeFeedbackService aiPracticeFeedbackService
     ) {
         this.userRepo = userRepo;
         this.materialRepo = materialRepo;
@@ -130,6 +133,7 @@ public class PracticeServiceImpl implements PracticeService {
         this.settingsService = settingsService;
         this.topicSelectionService = topicSelectionService;
         this.aiStudyGuideService = aiStudyGuideService;
+        this.aiPracticeFeedbackService = aiPracticeFeedbackService;
     }
 
     // =========================================================
@@ -436,57 +440,22 @@ public class PracticeServiceImpl implements PracticeService {
         int pass = exam.getPassScore() != null ? exam.getPassScore() : settingsService.getPassScore();
         attempt.setStatus(scorePct >= pass ? ExamResult.PASSED : ExamResult.FAILED);
 
-        // AI feedback tổng (sau khi grade)
-        String aiFeedback = "";
+        // AI feedback tổng (sau khi grade) - NEW: delegate to AiPracticeFeedbackService
+        // AI feedback tổng (sau khi grade) - NEW: delegate to AiPracticeFeedbackService
+        String formatted;
         try {
-            String prompt = buildAiFeedbackPrompt(me.getFullName(), examQuestions, results, scorePct);
-            aiFeedback = safeTrim(responsesClient.generateText(prompt), MAX_AI_FEEDBACK_CHARS);
-        } catch (Exception e) {
-            // keep silent, fallback below
+            List<AttemptReviewItemResponse> feedbackItems = buildFeedbackItemsV1(examQuestions, results);
+            formatted = aiPracticeFeedbackService.generateFeedback(me.getFullName(), scorePct, feedbackItems);
+        } catch (Exception ex) {
+            formatted = "Chào " + (me.getFullName() == null ? "bạn" : me.getFullName().trim()) + ",\n\n"
+                    + "Highlights\n"
+                    + "Bạn đã hoàn thành bài và đạt " + scorePct + "/100. Việc hoàn thành bài là tốt, giờ chỉ cần tối ưu phần ôn tập theo lỗi sai.\n\n"
+                    + "Focus areas\n"
+                    + "Hãy tập trung vào các câu sai quan trọng nhất: xác định bạn nhầm keyword nào và kiến thức đúng là gì. Sau đó làm thêm vài câu cùng chủ đề để khóa lại kiến thức.";
         }
 
-        if (aiFeedback == null || aiFeedback.isBlank()) {
-            aiFeedback = """
-Chào bạn,
-Điểm mạnh:
-- Bạn đã hoàn thành bài và có nỗ lực trả lời.
-- Một số câu làm đúng hướng theo học liệu.
-
-Điểm yếu:
-- Một số ý trọng tâm còn thiếu/nhầm.
-- Cách trình bày chưa rõ, thiếu keywords quan trọng.
-
-Gợi ý ôn tập:
-Tiêu đề: Hướng dẫn ôn tập cá nhân hóa
-Môn học: Lập trình
-Chủ đề: Ôn theo câu sai
-Gợi ý ôn tập:
-- Mở “Xem lại đáp án”, ghi lại 3 lỗi sai lặp lại nhiều nhất.
-- Với mỗi lỗi, viết 1 quy tắc ngắn: “Nếu gặp dạng này, mình sẽ…”.
-- Làm lại (Retest) sau cooldown và so sánh kết quả.
-
-Các khái niệm chính:
-- Ôn theo câu sai và lý do sai
-
-Danh sách từ vựng:
-- Keyword, distractor, rubric, analysis
-
-Câu hỏi ôn tập:
-- Bạn sai nhiều nhất ở dạng câu nào? Vì sao?
-- Điều kiện nào khiến đáp án đúng trở thành đúng?
-- Bạn đã bỏ sót keyword nào trong câu tự luận?
-- Viết lại 1 ví dụ ngắn áp dụng đúng kiến thức.
-- Lần sau gặp lại dạng này, bạn sẽ kiểm tra điều gì đầu tiên?
-""".trim();
-        }
-
-        String formatted = formatAiFeedback(me.getFullName(), aiFeedback);
-
-        // ✅ Guard: không bao giờ mất Điểm mạnh/Điểm yếu + cấm placeholder
-        formatted = ensureStrengthWeaknessPresent(me.getFullName(), formatted, examQuestions, results, scorePct);
-
-        // ✅ Study guide: LAZY-LOAD (chỉ generate khi user bấm "Hướng dẫn ôn tập")
-        // Submit xong chỉ lưu/ trả aiFeedback (Điểm mạnh/Điểm yếu). StudyGuide sẽ có endpoint riêng.
+// ✅ Study guide: LAZY-LOAD (chỉ generate khi user bấm "Hướng dẫn ôn tập")
+// Submit xong chỉ lưu/ trả aiFeedback (Điểm mạnh/Điểm yếu). StudyGuide sẽ có endpoint riêng.
         attempt.setAiFeedback(formatted);
         attempt.setStudyGuide(null);
 
@@ -988,22 +957,18 @@ Câu hỏi ôn tập:
 
         boolean timedOut = session.deadline != null && LocalDateTime.now().isAfter(session.deadline);
 
-        String rawAiFeedback = "";
+        // AI feedback tổng (sau khi grade) - NEW: delegate to AiPracticeFeedbackService
+        String formatted;
         try {
-            rawAiFeedback = responsesClient.generateText(buildAiFeedbackPromptFromGenerated(session, resultsV2, scorePct));
-        } catch (Exception ignore) {
+            List<AttemptReviewItemResponse> feedbackItems = buildFeedbackItemsV2(session, resultsV2);
+            formatted = aiPracticeFeedbackService.generateFeedback(session.userFullName, scorePct, feedbackItems);
+        } catch (Exception ex) {
+            formatted = "Chào " + (session.userFullName == null ? "bạn" : session.userFullName.trim()) + ",\n\n"
+                    +"Highlights\n"
+                    + "Bạn đã hoàn thành bài và đạt " + scorePct + "/100. Hãy tiếp tục luyện tập có mục tiêu để cải thiện dần độ chắc kiến thức.\n\n"
+                    + "Focus areas\n"
+                    + "Hãy xem lại các câu sai và tập trung vào 1–2 chủ đề bạn sai nhiều nhất. Khi ôn, chốt lại bản chất khái niệm đúng và làm thêm vài câu cùng chủ đề để tránh lặp lỗi.";
         }
-
-        String formatted = formatAiFeedback(session.userFullName, rawAiFeedback);
-
-        // ✅ Guard: không bao giờ mất Điểm mạnh/Điểm yếu + cấm placeholder
-        formatted = ensureStrengthWeaknessPresent(
-                session.userFullName,
-                formatted,
-                buildQuestionsFromSession(session),
-                buildResultsFromV2(session, resultsV2),
-                scorePct
-        );
 
         // ✅ Study guide: LAZY-LOAD (chỉ generate khi user bấm "Hướng dẫn ôn tập")
         // Submit xong chỉ lưu/ trả aiFeedback (Điểm mạnh/Điểm yếu). StudyGuide sẽ có endpoint riêng.
@@ -1248,8 +1213,96 @@ Câu hỏi ôn tập:
         public String key;
         public GeneratedQuestionItemResponse item;
     }
+    // =========================
+    // Feedback items builder (for AiPracticeFeedbackService)
+    // =========================
+    private List<AttemptReviewItemResponse> buildFeedbackItemsV1(
+            List<Question> questions,
+            List<AnswerResult> results
+    ) {
+        Map<Long, AnswerResult> map = results == null ? Map.of() : results.stream()
+                .filter(a -> a != null && a.questionId != null)
+                .collect(Collectors.toMap(a -> a.questionId, a -> a, (a, b) -> b));
 
-    private static class AnswerResultV2 {
+        List<AttemptReviewItemResponse> items = new ArrayList<>();
+        if (questions == null) return items;
+
+        for (Question q : questions) {
+            if (q == null) continue;
+
+            AnswerResult ar = map.get(q.getId());
+
+            AttemptReviewItemResponse it = new AttemptReviewItemResponse();
+            it.setQuestionId(q.getId());
+            it.setQuestionType(q.getQuestionType());
+            it.setContent(q.getContent());
+            it.setScore(ar != null ? ar.score : 0);
+            it.setMaxScore(ar != null ? ar.maxScore : 0);
+            it.setFeedback(ar != null ? ar.feedback : "");
+
+            if (q.getQuestionType() == QuestionType.MCQ) {
+                String right = normalizeChoice(q.getCorrectAnswer());
+                String sel = ar != null ? normalizeChoice(ar.selectedAnswer) : "";
+                it.setCorrectAnswer(right);
+                it.setSelectedAnswer(sel);
+                it.setIsCorrect(!sel.isBlank() && sel.equalsIgnoreCase(right));
+            } else {
+                Rubric rubric = readRubric(q.getAnalysis(), q.getCorrectAnswer());
+                it.setYourAnswer(ar != null ? ar.textAnswer : "");
+                it.setSampleAnswer(rubric.sampleAnswer);
+                int sc = ar != null ? ar.score : 0;
+                int mx = ar != null ? ar.maxScore : 0;
+                it.setIsCorrect(mx > 0 && sc >= mx); // perfect only
+            }
+
+            items.add(it);
+        }
+        return items;
+    }
+
+    private List<AttemptReviewItemResponse> buildFeedbackItemsV2(
+            PracticeSessionData session,
+            List<AnswerResultV2> resultsV2
+    ) {
+        Map<String, AnswerResultV2> map = resultsV2 == null ? Map.of() : resultsV2.stream()
+                .filter(a -> a != null && a.questionKey != null && !a.questionKey.isBlank())
+                .collect(Collectors.toMap(a -> a.questionKey, a -> a, (a, b) -> b));
+
+        List<AttemptReviewItemResponse> items = new ArrayList<>();
+        if (session == null || session.questions == null) return items;
+
+        for (SessionQuestion sq : session.questions) {
+            if (sq == null || sq.item == null) continue;
+            AnswerResultV2 ar = map.get(sq.key);
+
+            AttemptReviewItemResponse it = new AttemptReviewItemResponse();
+            it.setQuestionId(null);
+            it.setQuestionType(sq.item.getQuestionType());
+            it.setContent(sq.item.getQuestion());
+            it.setScore(ar != null ? ar.score : 0);
+            it.setMaxScore(ar != null ? ar.maxScore : 0);
+            it.setFeedback(ar != null ? ar.feedback : "");
+
+            if (sq.item.getQuestionType() == QuestionType.MCQ) {
+                String sel = ar != null ? normalizeChoice(ar.selectedAnswer) : "";
+                String right = ar != null ? normalizeChoice(ar.correctAnswer) : "";
+                it.setSelectedAnswer(sel);
+                it.setCorrectAnswer(right);
+                it.setIsCorrect(!sel.isBlank() && sel.equalsIgnoreCase(right));
+            } else {
+                it.setYourAnswer(ar != null ? ar.textAnswer : "");
+                it.setSampleAnswer(ar != null ? ar.sampleAnswer : "");
+                int sc = ar != null ? ar.score : 0;
+                int mx = ar != null ? ar.maxScore : 0;
+                it.setIsCorrect(mx > 0 && sc >= mx); // perfect only
+            }
+
+            items.add(it);
+        }
+        return items;
+    }
+
+    static class AnswerResultV2 {
         public String questionKey;
         public QuestionType questionType;
 

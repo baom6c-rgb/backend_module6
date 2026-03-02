@@ -7,7 +7,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
-import org.mockito.MockitoAnnotations;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.core.Authentication;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -18,6 +19,7 @@ import static org.mockito.Mockito.*;
  * Unit test thuần cho PracticeController
  * Không sử dụng Spring context, chỉ test logic của controller
  */
+@ExtendWith(MockitoExtension.class)
 class PracticeControllerTest {
 
     private PracticeController controller;
@@ -32,7 +34,7 @@ class PracticeControllerTest {
 
     @BeforeEach
     void setUp() {
-        MockitoAnnotations.openMocks(this);
+        
         controller = new PracticeController(practiceService);
         when(authentication.getName()).thenReturn(USERNAME);
     }

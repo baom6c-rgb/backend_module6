@@ -11,8 +11,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.context.support.WithMockUser;
@@ -24,17 +24,22 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
 @WebMvcTest(UserController.class)
+@AutoConfigureMockMvc(addFilters = false)
 @Import(UserControllerTest.MockConfig.class)
 class UserControllerTest {
 
-    private final MockMvc mockMvc;
-    private final ObjectMapper objectMapper;
+    @Autowired
+    private MockMvc mockMvc;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    UserControllerTest(MockMvc mockMvc, ObjectMapper objectMapper) {
-        this.mockMvc = mockMvc;
-        this.objectMapper = objectMapper;
-    }
+    @Autowired
+    private UserService userService;
 
     // ========================= UPDATE PROFILE (LEGACY/ADMIN) =========================
     @Test
@@ -49,7 +54,7 @@ class UserControllerTest {
             """;
 
         User mockUser = new User();
-        when(MockConfig.userService.updateProfile(eq(userId), any(UserUpdateDTO.class)))
+        when(userService.updateProfile(eq(userId), any(UserUpdateDTO.class)))
                 .thenReturn(mockUser);
 
         // when & then
@@ -58,7 +63,7 @@ class UserControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.userService).updateProfile(eq(userId), any(UserUpdateDTO.class));
+        verify(userService).updateProfile(eq(userId), any(UserUpdateDTO.class));
     }
 
     // ========================= GET STATUS =========================
@@ -67,7 +72,7 @@ class UserControllerTest {
         // given
         String email = "test@test.com";
 
-        when(MockConfig.userService.getStatusByEmail(email))
+        when(userService.getStatusByEmail(email))
                 .thenReturn(any(UserStatusResponse.class));
 
         // when & then
@@ -75,7 +80,7 @@ class UserControllerTest {
                         .param("email", email))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.userService).getStatusByEmail(email);
+        verify(userService).getStatusByEmail(email);
     }
 
     @Test
@@ -83,7 +88,7 @@ class UserControllerTest {
         // given
         String email = "notfound@test.com";
 
-        when(MockConfig.userService.getStatusByEmail(email))
+        when(userService.getStatusByEmail(email))
                 .thenThrow(new RuntimeException("User not found"));
 
         // when & then
@@ -92,7 +97,7 @@ class UserControllerTest {
                 .andExpect(status().isNotFound())
                 .andExpect(content().string("User not found"));
 
-        verify(MockConfig.userService).getStatusByEmail(email);
+        verify(userService).getStatusByEmail(email);
     }
 
     // ========================= GET MY PROFILE =========================
@@ -102,14 +107,14 @@ class UserControllerTest {
         // given
         String email = "student@test.com";
 
-        when(MockConfig.userService.getMyProfileByEmail(email))
+        when(userService.getMyProfileByEmail(email))
                 .thenReturn(any(StudentProfileResponse.class));
 
         // when & then
         mockMvc.perform(get("/api/users/me/profile"))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.userService).getMyProfileByEmail(email);
+        verify(userService).getMyProfileByEmail(email);
     }
 
     // ========================= UPDATE MY PROFILE =========================
@@ -125,7 +130,7 @@ class UserControllerTest {
             }
             """;
 
-        doNothing().when(MockConfig.userService)
+        doNothing().when(userService)
                 .updateStudentProfileByEmail(eq(email), any(StudentUpdateProfileRequest.class));
 
         // when & then
@@ -134,7 +139,7 @@ class UserControllerTest {
                         .content(requestJson))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.userService).updateStudentProfileByEmail(eq(email), any(StudentUpdateProfileRequest.class));
+        verify(userService).updateStudentProfileByEmail(eq(email), any(StudentUpdateProfileRequest.class));
     }
 
     // ========================= UPLOAD AVATAR =========================
@@ -150,7 +155,7 @@ class UserControllerTest {
                 "test image content".getBytes()
         );
 
-        when(MockConfig.userService.updateMyAvatarByEmail(eq(email), any()))
+        when(userService.updateMyAvatarByEmail(eq(email), any()))
                 .thenReturn(any(StudentProfileResponse.class));
 
         // when & then
@@ -158,7 +163,7 @@ class UserControllerTest {
                         .file(file))
                 .andExpect(status().isOk());
 
-        verify(MockConfig.userService).updateMyAvatarByEmail(eq(email), any());
+        verify(userService).updateMyAvatarByEmail(eq(email), any());
     }
 
     // ========================= CHANGE PASSWORD =========================
@@ -174,7 +179,7 @@ class UserControllerTest {
             }
             """;
 
-        doNothing().when(MockConfig.userService)
+        doNothing().when(userService)
                 .changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
 
         // when & then
@@ -184,7 +189,7 @@ class UserControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string("Đổi mật khẩu thành công"));
 
-        verify(MockConfig.userService).changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
+        verify(userService).changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
     }
 
     @Test
@@ -200,7 +205,7 @@ class UserControllerTest {
             """;
 
         doThrow(new RuntimeException("Mật khẩu cũ không đúng"))
-                .when(MockConfig.userService)
+                .when(userService)
                 .changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
 
         // when & then
@@ -210,7 +215,7 @@ class UserControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string("Mật khẩu cũ không đúng"));
 
-        verify(MockConfig.userService).changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
+        verify(userService).changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
     }
 
     @Test
@@ -226,7 +231,7 @@ class UserControllerTest {
             """;
 
         doThrow(new Exception())
-                .when(MockConfig.userService)
+                .when(userService)
                 .changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
 
         // when & then
@@ -236,7 +241,7 @@ class UserControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(content().string("Đổi mật khẩu thất bại"));
 
-        verify(MockConfig.userService).changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
+        verify(userService).changeMyPasswordByEmail(eq(email), any(ChangePasswordRequest.class));
     }
 
     // ========================= ME (TEST ENDPOINT) =========================
@@ -257,13 +262,13 @@ class UserControllerTest {
     }
 
     // ========================= MOCK CONFIG =========================
+
+    @TestConfiguration
     static class MockConfig {
-
-        static final UserService userService = Mockito.mock(UserService.class);
-
         @Bean
         UserService userService() {
-            return userService;
+            return Mockito.mock(UserService.class);
         }
     }
+
 }

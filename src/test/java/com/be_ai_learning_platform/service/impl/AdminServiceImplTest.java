@@ -5,11 +5,18 @@ import com.be_ai_learning_platform.dto.request.AdminAddUserRequest;
 import com.be_ai_learning_platform.dto.request.AdminUpdateUserRequest;
 import com.be_ai_learning_platform.dto.response.AdminResponse;
 import com.be_ai_learning_platform.dto.response.AdminUserDetailResponse;
-import com.be_ai_learning_platform.entity.*;
-import com.be_ai_learning_platform.entity.enums.LoginProvider;
+import com.be_ai_learning_platform.entity.ClassEntity;
+import com.be_ai_learning_platform.entity.LearningModule;
+import com.be_ai_learning_platform.entity.Role;
+import com.be_ai_learning_platform.entity.User;
+import com.be_ai_learning_platform.entity.UserRole;
 import com.be_ai_learning_platform.entity.enums.RegisterMethod;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
-import com.be_ai_learning_platform.repository.*;
+import com.be_ai_learning_platform.repository.ClassRepository;
+import com.be_ai_learning_platform.repository.ModuleRepository;
+import com.be_ai_learning_platform.repository.RoleRepository;
+import com.be_ai_learning_platform.repository.UserRepository;
+import com.be_ai_learning_platform.repository.UserRoleRepository;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,11 +25,11 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -69,8 +76,10 @@ class AdminServiceImplTest {
 
         AdminResponse res = adminService.addUser(req);
 
+        assertNotNull(res);
         assertEquals("student@gmail.com", res.getEmail());
         verify(userRoleRepository).save(any(UserRole.class));
+        verify(userRepository).save(any(User.class));
     }
 
     @Test
@@ -80,9 +89,7 @@ class AdminServiceImplTest {
 
         when(userRepository.existsByEmail("student@gmail.com")).thenReturn(true);
 
-        RuntimeException ex = assertThrows(RuntimeException.class,
-                () -> adminService.addUser(req));
-
+        RuntimeException ex = assertThrows(RuntimeException.class, () -> adminService.addUser(req));
         assertEquals("Email đã tồn tại!", ex.getMessage());
     }
 
@@ -105,8 +112,11 @@ class AdminServiceImplTest {
 
         AdminResponse res = adminService.addAdmin(req);
 
+        assertNotNull(res);
         assertEquals("admin@gmail.com", res.getEmail());
         assertEquals(RegisterMethod.FORM, res.getRegisterMethod());
+        verify(userRepository).save(any(User.class));
+        verify(userRoleRepository).save(any(UserRole.class));
     }
 
     // ================= APPROVE / REJECT =================
@@ -125,7 +135,7 @@ class AdminServiceImplTest {
     }
 
     @Test
-    void reject_success() {
+    void reject_success_shouldBecomeBlocked() {
         User user = new User();
         user.setStatus(UserStatus.WAITING_APPROVAL);
 
@@ -133,7 +143,9 @@ class AdminServiceImplTest {
 
         adminService.reject(1L);
 
-        assertEquals(UserStatus.REJECTED, user.getStatus());
+        // ✅ Vì enum hiện tại không có REJECTED -> coi reject là BLOCKED
+        assertEquals(UserStatus.BLOCKED, user.getStatus());
+        verify(userRepository).save(user);
     }
 
     // ================= BLOCK / UNBLOCK =================
@@ -148,6 +160,7 @@ class AdminServiceImplTest {
         adminService.blockUser(1L);
 
         assertEquals(UserStatus.BLOCKED, user.getStatus());
+        verify(userRepository).save(user);
     }
 
     @Test
@@ -160,6 +173,7 @@ class AdminServiceImplTest {
         adminService.unblockUser(1L);
 
         assertEquals(UserStatus.ACTIVE, user.getStatus());
+        verify(userRepository).save(user);
     }
 
     // ================= UPDATE USER =================
@@ -177,7 +191,10 @@ class AdminServiceImplTest {
         user.setEmail("old@gmail.com");
 
         ClassEntity clazz = new ClassEntity();
+        clazz.setId(1L);
+
         LearningModule module = new LearningModule();
+        module.setId(1L);
 
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
         when(userRepository.existsByEmail("new@gmail.com")).thenReturn(false);
@@ -186,8 +203,10 @@ class AdminServiceImplTest {
 
         AdminUserDetailResponse res = adminService.updateUser(1L, req);
 
+        assertNotNull(res);
         verify(entityManager).flush();
         verify(entityManager).clear();
+        verify(userRepository).save(user);
     }
 
     // ================= GET LIST =================
@@ -202,5 +221,6 @@ class AdminServiceImplTest {
         List<AdminResponse> list = adminService.getAllUsers();
 
         assertEquals(1, list.size());
+        assertEquals("a@gmail.com", list.get(0).getEmail());
     }
 }
