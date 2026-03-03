@@ -2,13 +2,13 @@ package com.be_ai_learning_platform.dto.response;
 
 import com.be_ai_learning_platform.entity.enums.QuestionType;
 
-import java.util.Map;
-
-public class AttemptQuestionResponse {
+public class QuestionDetailResponse {
     private Long questionId;
-    private QuestionType questionType; // MCQ | ESSAY
+    private QuestionType questionType;
     private String content;
-    private Map<String, String> options; // MCQ only
+    private String optionsJson;
+    private String correctAnswer;
+    private String analysis;
 
     public Long getQuestionId() {
         return questionId;
@@ -34,11 +34,27 @@ public class AttemptQuestionResponse {
         this.content = content;
     }
 
-    public Map<String, String> getOptions() {
-        return options;
+    public String getOptionsJson() {
+        return optionsJson;
     }
 
-    public void setOptions(Map<String, String> options) {
-        this.options = options;
+    public void setOptionsJson(String optionsJson) {
+        this.optionsJson = optionsJson;
+    }
+
+    public String getCorrectAnswer() {
+        return correctAnswer;
+    }
+
+    public void setCorrectAnswer(String correctAnswer) {
+        this.correctAnswer = correctAnswer;
+    }
+
+    public String getAnalysis() {
+        return analysis;
+    }
+
+    public void setAnalysis(String analysis) {
+        this.analysis = analysis;
     }
 }
