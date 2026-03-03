@@ -22,6 +22,7 @@ public class Exam {
     private User user;
 
     @Enumerated(EnumType.STRING)
+    @Column(name = "type", length = 30, nullable = false)
     private ExamType type;
 
     // ✅ NEW: AI đặt tên bài

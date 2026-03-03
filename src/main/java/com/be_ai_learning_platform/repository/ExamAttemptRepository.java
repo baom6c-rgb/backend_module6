@@ -74,6 +74,10 @@ public interface ExamAttemptRepository extends JpaRepository<ExamAttempt, Long> 
     """)
     Optional<ExamAttempt> findByIdAndUserIdFetchExam(@Param("id") Long id, @Param("userId") Long userId);
 
+    Optional<ExamAttempt> findFirstByExamIdAndUserIdOrderByIdDesc(Long examId, Long userId);
+
+    void deleteAllByExamId(Long examId);
+
     List<ExamAttempt> findByUserIdOrderBySubmitTimeDesc(Long userId);
 
     // ===== Dashboard =====

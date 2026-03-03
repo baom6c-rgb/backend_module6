@@ -1,6 +1,7 @@
 package com.be_ai_learning_platform.service.mail;
 
 import com.be_ai_learning_platform.entity.User;
+import com.be_ai_learning_platform.entity.Exam;
 import com.be_ai_learning_platform.entity.enums.UserStatus;
 import com.be_ai_learning_platform.service.SystemSettingsService;
 import jakarta.mail.internet.MimeMessage;
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -178,5 +180,80 @@ public class MailService {
         } catch (Exception e) {
             throw new RuntimeException("Send monthly report email failed", e);
         }
+    }
+
+    // ===================== Admin assigned exam mails =====================
+
+    public void sendAssignedExamMail(User student, Exam exam, LocalDateTime openAt, LocalDateTime dueAt) {
+        if (student == null || exam == null) return;
+        if (!settingsService.isEmailNotificationEnabled()) return;
+
+        String openText = (openAt == null) ? "Ngay bây giờ" : openAt.toString();
+        String dueText = (dueAt == null) ? "Không giới hạn" : dueAt.toString();
+
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(student.getEmail());
+        message.setSubject("📝 [Bumblefly AI] Bạn được giao một bài kiểm tra mới");
+
+        message.setText(
+                "Xin chào " + safeName(student.getFullName()) + ",\n\n" +
+                        "Bạn vừa được Admin giao một bài kiểm tra mới trên hệ thống Bumblefly AI.\n\n" +
+                        "===== THÔNG TIN BÀI KIỂM TRA =====\n" +
+                        "Tên bài: " + safeName(exam.getTitle()) + "\n" +
+                        "Thời lượng: " + (exam.getDurationMinutes() == null ? "" : (exam.getDurationMinutes() + " phút")) + "\n" +
+                        "Mở từ: " + openText + "\n" +
+                        "Hạn nộp: " + dueText + "\n\n" +
+                        "Vui lòng đăng nhập để làm bài.\n\n" +
+                        "Trân trọng,\n" +
+                        "Bumblefly AI\n\n" +
+                        "———\n" +
+                        "Đây là email tự động. Vui lòng không trả lời email này."
+        );
+
+        mailSender.send(message);
+    }
+
+    public void sendCheatingAlertMail(User admin, User student, Exam exam, String eventType, LocalDateTime at) {
+        if (!settingsService.isEmailNotificationEnabled()) return;
+        if (admin == null || admin.getEmail() == null || admin.getEmail().isBlank()) {
+            // fallback: send to configured admins
+            String[] admins = settingsService.getAdminEmails();
+            if (admins.length == 0) return;
+
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setFrom(fromEmail);
+            message.setTo(admins);
+            message.setSubject("⚠️ [Bumblefly AI] Cảnh báo gian lận");
+            message.setText(buildCheatBody(student, exam, eventType, at));
+            mailSender.send(message);
+            return;
+        }
+
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(admin.getEmail());
+        message.setSubject("⚠️ [Bumblefly AI] Cảnh báo gian lận");
+        message.setText(buildCheatBody(student, exam, eventType, at));
+        mailSender.send(message);
+    }
+
+    private String buildCheatBody(User student, Exam exam, String eventType, LocalDateTime at) {
+        return "Kính gửi Admin,\n\n" +
+                "Hệ thống Bumblefly AI ghi nhận một hành vi nghi ngờ gian lận trong lúc làm bài.\n\n" +
+                "===== THÔNG TIN =====\n" +
+                "Học viên: " + (student == null ? "" : safeName(student.getFullName())) + "\n" +
+                "Email: " + (student == null ? "" : safeName(student.getEmail())) + "\n" +
+                "Bài kiểm tra: " + (exam == null ? "" : safeName(exam.getTitle())) + "\n" +
+                "Sự kiện: " + safeName(eventType) + "\n" +
+                "Thời điểm: " + (at == null ? "" : at.toString()) + "\n\n" +
+                "Bạn có thể vào trang quản trị để xem chi tiết log.\n\n" +
+                "———\n" +
+                "Đây là email tự động. Vui lòng không trả lời email này.";
+    }
+
+    private String safeName(String s) {
+        if (s == null) return "";
+        return s.trim();
     }
 }

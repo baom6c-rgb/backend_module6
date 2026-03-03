@@ -9,7 +9,16 @@ import java.util.List;
 
 public interface ExamQuestionRepository extends JpaRepository<ExamQuestion, Long> {
 
-    List<ExamQuestion> findAllByExamId(Long examId);
+    List<ExamQuestion> findAllByExam_Id(Long examId);
+
+    void deleteAllByExamId(Long examId);
+
+    @Query("""
+        select eq.question.id
+        from ExamQuestion eq
+        where eq.exam.id = :examId
+    """)
+    List<Long> findQuestionIdsByExamId(@Param("examId") Long examId);
     @Query("""
     select eq
     from ExamQuestion eq
