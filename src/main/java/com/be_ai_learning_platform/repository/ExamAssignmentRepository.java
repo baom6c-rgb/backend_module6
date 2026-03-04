@@ -83,4 +83,17 @@ public interface ExamAssignmentRepository extends JpaRepository<ExamAssignment, 
         order by ea.createdAt desc
     """)
     List<ExamAssignment> findAllByExamIdFetchUsersAndAttempt(@Param("examId") Long examId);
+
+    @Query("""
+    select ea
+    from ExamAssignment ea
+    join fetch ea.exam e
+    join fetch ea.student s
+    left join fetch ea.attempt at
+    where e.id = :examId and ea.id = :assignmentId
+""")
+    Optional<ExamAssignment> findByExamIdAndAssignmentIdFetchAll(
+            @Param("examId") Long examId,
+            @Param("assignmentId") Long assignmentId
+    );
 }
