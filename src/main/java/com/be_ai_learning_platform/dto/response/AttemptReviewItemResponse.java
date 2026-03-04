@@ -29,39 +29,99 @@ public class AttemptReviewItemResponse {
     // per-question feedback (can be rule-based or AI explanation)
     private String feedback;
 
-    public Long getQuestionId() { return questionId; }
-    public void setQuestionId(Long questionId) { this.questionId = questionId; }
+    public Long getQuestionId() {
+        return questionId;
+    }
 
-    public QuestionType getQuestionType() { return questionType; }
-    public void setQuestionType(QuestionType questionType) { this.questionType = questionType; }
+    public void setQuestionId(Long questionId) {
+        this.questionId = questionId;
+    }
 
-    public String getContent() { return content; }
-    public void setContent(String content) { this.content = content; }
+    public QuestionType getQuestionType() {
+        return questionType;
+    }
 
-    public Map<String, String> getOptions() { return options; }
-    public void setOptions(Map<String, String> options) { this.options = options; }
+    public void setQuestionType(QuestionType questionType) {
+        this.questionType = questionType;
+    }
 
-    public String getCorrectAnswer() { return correctAnswer; }
-    public void setCorrectAnswer(String correctAnswer) { this.correctAnswer = correctAnswer; }
+    public String getContent() {
+        return content;
+    }
 
-    public String getSelectedAnswer() { return selectedAnswer; }
-    public void setSelectedAnswer(String selectedAnswer) { this.selectedAnswer = selectedAnswer; }
+    public void setContent(String content) {
+        this.content = content;
+    }
 
-    public String getYourAnswer() { return yourAnswer; }
-    public void setYourAnswer(String yourAnswer) { this.yourAnswer = yourAnswer; }
+    public Map<String, String> getOptions() {
+        return options;
+    }
 
-    public String getSampleAnswer() { return sampleAnswer; }
-    public void setSampleAnswer(String sampleAnswer) { this.sampleAnswer = sampleAnswer; }
+    public void setOptions(Map<String, String> options) {
+        this.options = options;
+    }
 
-    public Integer getScore() { return score; }
-    public void setScore(Integer score) { this.score = score; }
+    public String getCorrectAnswer() {
+        return correctAnswer;
+    }
 
-    public Integer getMaxScore() { return maxScore; }
-    public void setMaxScore(Integer maxScore) { this.maxScore = maxScore; }
+    public void setCorrectAnswer(String correctAnswer) {
+        this.correctAnswer = correctAnswer;
+    }
 
-    public Boolean getIsCorrect() { return isCorrect; }
-    public void setIsCorrect(Boolean isCorrect) { this.isCorrect = isCorrect; }
+    public String getSelectedAnswer() {
+        return selectedAnswer;
+    }
 
-    public String getFeedback() { return feedback; }
-    public void setFeedback(String feedback) { this.feedback = feedback; }
+    public void setSelectedAnswer(String selectedAnswer) {
+        this.selectedAnswer = selectedAnswer;
+    }
+
+    public String getYourAnswer() {
+        return yourAnswer;
+    }
+
+    public void setYourAnswer(String yourAnswer) {
+        this.yourAnswer = yourAnswer;
+    }
+
+    public String getSampleAnswer() {
+        return sampleAnswer;
+    }
+
+    public void setSampleAnswer(String sampleAnswer) {
+        this.sampleAnswer = sampleAnswer;
+    }
+
+    public Integer getScore() {
+        return score;
+    }
+
+    public void setScore(Integer score) {
+        this.score = score;
+    }
+
+    public Integer getMaxScore() {
+        return maxScore;
+    }
+
+    public void setMaxScore(Integer maxScore) {
+        this.maxScore = maxScore;
+    }
+
+    public Boolean getIsCorrect() {
+        return isCorrect;
+    }
+
+    public void setIsCorrect(Boolean isCorrect) {
+        this.isCorrect = isCorrect;
+    }
+
+    public String getFeedback() {
+        return feedback;
+    }
+
+    public void setFeedback(String feedback) {
+        this.feedback = feedback;
+    }
 }

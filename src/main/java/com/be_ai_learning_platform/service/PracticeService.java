@@ -28,6 +28,11 @@ public interface PracticeService {
     SubmitPracticeV2Response submitSessionV2(String email, String sessionToken, SubmitPracticeSessionRequest req);
 
     // =========================
+    // V2 Admin create assigned exam (persist exam/questions only)
+    // =========================
+    Long createExamFromSessionV2(String email, String sessionToken);
+
+    // =========================
     // V2 Retest
     // =========================
     RetestStatusResponse getRetestStatusV2(String email, Long attemptId);

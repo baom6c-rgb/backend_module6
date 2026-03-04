@@ -1019,6 +1019,72 @@ public class PracticeServiceImpl implements PracticeService {
     }
 
     // =========================================================
+    // V2 - Admin: persist Exam + Questions from an existing session (no Attempt)
+    // =========================================================
+    @Transactional
+    @Override
+    public Long createExamFromSessionV2(String email, String sessionToken) {
+        User me = getMe(email);
+        PracticeSessionData session = getSessionOrThrow(email, sessionToken);
+
+        if (!Objects.equals(session.userId, me.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Session does not belong to current user");
+        }
+        if (session.submitted) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Session already submitted");
+        }
+
+        LearningMaterial material = materialRepo.findById(session.materialId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
+
+        Exam exam = new Exam();
+        exam.setUser(me); // creator/admin
+        exam.setType(ExamType.ADMIN_ASSIGNED);
+        exam.setDurationMinutes(session.durationMinutes);
+        exam.setPassScore(settingsService.getPassScore());
+        exam.setCreatedAt(LocalDateTime.now());
+
+        // title like practice
+        exam.setTitle(generateExamTitle(me, material, session.numberOfQuestions == null ? 0 : session.numberOfQuestions));
+
+        exam = examRepo.save(exam);
+
+        for (SessionQuestion sq : session.questions) {
+            GeneratedQuestionItemResponse item = sq.item;
+            if (item == null || item.getQuestionType() == null) continue;
+
+            Question q = new Question();
+            q.setMaterial(material);
+            q.setQuestionType(item.getQuestionType());
+            q.setContent(item.getQuestion() == null ? "" : item.getQuestion().trim());
+
+            if (item.getQuestionType() == QuestionType.MCQ) {
+                q.setCorrectAnswer(normalizeChoice(item.getCorrectAnswer()));
+                q.setOptionsJson(writeOptionsJson(item.getOptions()));
+                q.setAnalysis(safeTrim(item.getAnalysis(), 2000));
+            } else {
+                q.setCorrectAnswer(null);
+                q.setOptionsJson(null);
+                q.setAnalysis(writeRubricJson(item.getSampleAnswer(), item.getKeywords(), item.getMaxScore()));
+            }
+
+            q = questionRepo.save(q);
+
+            ExamQuestion eq = new ExamQuestion();
+            eq.setExam(exam);
+            eq.setQuestion(q);
+            examQuestionRepo.save(eq);
+        }
+
+        // prevent reuse
+        session.submitted = true;
+        practiceSessionCache.put(sessionKey(email, sessionToken), session);
+
+        return exam.getId();
+    }
+
+
+    // =========================================================
     // V2 - Retest
     // =========================================================
     @Override

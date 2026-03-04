@@ -10,6 +10,9 @@ public class GenerateQuestionsResponse {
     private Long materialId;
     private Integer numberOfQuestions;
 
+    // ✅ cần cho suggestedTitle ở admin preview/create
+    private String examTitle;
+
     // token trả về từ preview
     private String previewToken;
 
