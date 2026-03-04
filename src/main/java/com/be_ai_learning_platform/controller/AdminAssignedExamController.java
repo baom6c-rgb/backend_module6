@@ -1,6 +1,8 @@
+// src/main/java/com/be_ai_learning_platform/controller/AdminAssignedExamController.java
 package com.be_ai_learning_platform.controller;
 
 import com.be_ai_learning_platform.dto.request.*;
+import com.be_ai_learning_platform.dto.response.AdminAssignmentReviewResponse;
 import com.be_ai_learning_platform.dto.response.AdminExamDetailResponse;
 import com.be_ai_learning_platform.dto.response.AdminExamPreviewResponse;
 import com.be_ai_learning_platform.service.AdminAssignedExamService;
@@ -80,5 +82,15 @@ public class AdminAssignedExamController {
             @PathVariable Long examId
     ) {
         return ResponseEntity.ok(service.hardDelete(email, examId));
+    }
+
+    // ===== Review =====
+    @GetMapping("/{examId}/assignments/{assignmentId}/review")
+    public ResponseEntity<AdminAssignmentReviewResponse> reviewAssignment(
+            @AuthenticationPrincipal String email,
+            @PathVariable Long examId,
+            @PathVariable Long assignmentId
+    ) {
+        return ResponseEntity.ok(service.reviewAssignment(email, examId, assignmentId));
     }
 }
