@@ -47,6 +47,7 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
         this.settingsService = settingsService;
     }
 
+    // ===================== PRACTICE / DEFAULT =====================
     @Override
     public GenerateQuestionsResponse generate(String currentEmail, Long materialId, int ignoredNumberOfQuestions) {
 
@@ -60,14 +61,7 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
         }
 
-        String extracted = material.getExtractedText();
-        if (extracted == null || extracted.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Extracted text is empty");
-        }
-
-        String trimmed = extracted.length() > MAX_EXTRACTED_CHARS
-                ? extracted.substring(0, MAX_EXTRACTED_CHARS)
-                : extracted;
+        String trimmed = trimExtracted(material);
 
         int mcqCount = Math.max(0, settingsService.getMcqQuestionCount());
         int essayCount = Math.max(0, settingsService.getEssayQuestionCount());
@@ -79,23 +73,76 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
 
         String prompt = promptBuilder.buildPrompt(trimmed, mcqCount, essayCount);
 
-        // 1) Call AI (with retry for transient/quota)
         String json = callGeminiWithRetry(prompt, totalQuestions);
 
-        // 2) Parse JSON (with retry if JSON bị cắt/ngắt)
-        GenerateQuestionsResponse res = parseWithRetry(json, trimmed, materialId, totalQuestions, mcqCount, essayCount);
+        GenerateQuestionsResponse res = parseWithRetry(
+                json,
+                trimmed,
+                totalQuestions,
+                mcqCount,
+                essayCount,
+                false,
+                null
+        );
 
-        // meta
         res.setMaterialId(materialId);
         res.setNumberOfQuestions(totalQuestions);
 
-        // validate business
         QuestionValidator.validate(res, totalQuestions);
         QuestionDistributionValidator.validate(res, mcqCount, essayCount);
 
         return res;
     }
 
+    // ===================== ADMIN (MCQ + ESSAY) =====================
+    @Override
+    public GenerateQuestionsResponse generate(String currentEmail, Long materialId, int mcqCount, int essayCount) {
+
+        User me = userRepo.findByEmail(currentEmail)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "User not found"));
+
+        LearningMaterial material = materialRepo.findByIdAndUser(materialId, me)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Material not found"));
+
+        if (material.getStatus() != MaterialStatus.EXTRACTED) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
+        }
+
+        if (mcqCount < 0 || essayCount < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mcqCount/essayCount must be >= 0");
+        }
+
+        int totalQuestions = mcqCount + essayCount;
+        if (totalQuestions <= 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Total questions must be > 0");
+        }
+
+        String trimmed = trimExtracted(material);
+
+        String prompt = promptBuilder.buildPrompt(trimmed, mcqCount, essayCount);
+
+        String json = callGeminiWithRetry(prompt, totalQuestions);
+
+        GenerateQuestionsResponse res = parseWithRetry(
+                json,
+                trimmed,
+                totalQuestions,
+                mcqCount,
+                essayCount,
+                false,
+                null
+        );
+
+        res.setMaterialId(materialId);
+        res.setNumberOfQuestions(totalQuestions);
+
+        QuestionValidator.validate(res, totalQuestions);
+        QuestionDistributionValidator.validate(res, mcqCount, essayCount);
+
+        return res;
+    }
+
+    // ===================== RETEST =====================
     @Override
     public GenerateQuestionsResponse generateRetest(String currentEmail, Long materialId, int ignoredNumberOfQuestions, String focusText) {
 
@@ -109,14 +156,7 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Material is not extracted yet");
         }
 
-        String extracted = material.getExtractedText();
-        if (extracted == null || extracted.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Extracted text is empty");
-        }
-
-        String trimmed = extracted.length() > MAX_EXTRACTED_CHARS
-                ? extracted.substring(0, MAX_EXTRACTED_CHARS)
-                : extracted;
+        String trimmed = trimExtracted(material);
 
         int mcqCount = Math.max(0, settingsService.getMcqQuestionCount());
         int essayCount = Math.max(0, settingsService.getEssayQuestionCount());
@@ -130,7 +170,15 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
 
         String json = callGeminiWithRetry(prompt, totalQuestions);
 
-        GenerateQuestionsResponse res = parseWithRetry(json, trimmed, materialId, totalQuestions, mcqCount, essayCount);
+        GenerateQuestionsResponse res = parseWithRetry(
+                json,
+                trimmed,
+                totalQuestions,
+                mcqCount,
+                essayCount,
+                true,
+                focusText
+        );
 
         res.setMaterialId(materialId);
         res.setNumberOfQuestions(totalQuestions);
@@ -141,13 +189,27 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
         return res;
     }
 
+    // ===================== COMMON HELPERS =====================
+
+    private String trimExtracted(LearningMaterial material) {
+        String extracted = material.getExtractedText();
+        if (extracted == null || extracted.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Extracted text is empty");
+        }
+
+        return extracted.length() > MAX_EXTRACTED_CHARS
+                ? extracted.substring(0, MAX_EXTRACTED_CHARS)
+                : extracted;
+    }
+
     private GenerateQuestionsResponse parseWithRetry(
             String json,
             String trimmed,
-            Long materialId,
             int totalQuestions,
             int mcqCount,
-            int essayCount
+            int essayCount,
+            boolean isRetest,
+            String focusText
     ) {
         Exception last = null;
         String currentJson = json;
@@ -163,7 +225,9 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
                             ? trimmed.substring(0, PARSE_RETRY_TRIMMED_CHARS)
                             : trimmed;
 
-                    String retryPrompt = promptBuilder.buildPrompt(shorter, mcqCount, essayCount);
+                    String retryPrompt = isRetest
+                            ? promptBuilder.buildRetestPrompt(shorter, mcqCount, essayCount, focusText)
+                            : promptBuilder.buildPrompt(shorter, mcqCount, essayCount);
 
                     currentJson = callGeminiWithRetry(retryPrompt, totalQuestions);
                     continue;
