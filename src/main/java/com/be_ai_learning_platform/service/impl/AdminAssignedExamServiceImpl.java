@@ -1,3 +1,4 @@
+// src/main/java/com/be_ai_learning_platform/service/impl/AdminAssignedExamServiceImpl.java
 package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.dto.request.AdminCreateAssignedExamRequest;
@@ -15,6 +16,7 @@ import com.be_ai_learning_platform.service.QuestionGenerationService;
 import com.be_ai_learning_platform.service.SystemSettingsService;
 import com.be_ai_learning_platform.service.mail.MailService;
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -212,9 +214,8 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
         exam.setUser(admin);
         exam.setType(ExamType.ADMIN_ASSIGNED);
 
-        // PassScore: vẫn theo rule hệ thống (m có thể cho admin config sau)
+        // PassScore: theo rule hệ thống
         exam.setPassScore(settingsService.getPassScore());
-
         exam.setCreatedAt(nowVn()); // ✅ VN time
 
         String title = safeTitle(req.getTitle());
@@ -250,7 +251,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
                 q.setOptionsJson(null);
                 q.setAnalysis(writeRubricJson(item.getSampleAnswer(), item.getKeywords(), item.getMaxScore()));
             } else {
-                // nếu sau này có type mới mà AI trả về -> fail fast
                 throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI response invalid (unsupported questionType)");
             }
 
@@ -299,7 +299,8 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
 
             try {
                 mailService.sendAssignedExamMail(s, exam, asg.getOpenAt(), asg.getDueAt());
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -336,7 +337,7 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
             long assignedCount = row == null ? 0L : (Long) row[1];
 
             LocalDateTime openAt = row == null ? null : normalizeVn((LocalDateTime) row[2]);
-            LocalDateTime dueAt  = row == null ? null : normalizeVn((LocalDateTime) row[3]);
+            LocalDateTime dueAt = row == null ? null : normalizeVn((LocalDateTime) row[3]);
 
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("examId", e.getId());
@@ -446,6 +447,245 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
                 .collect(Collectors.toList());
     }
 
+    // ========================= REVIEW (FIX ESSAY ANSWER) =========================
+    @Override
+    @Transactional(readOnly = true)
+    public AdminAssignmentReviewResponse reviewAssignment(String adminEmail, Long examId, Long assignmentId) {
+        User admin = requireUser(adminEmail);
+
+        Exam exam = examRepo.findById(examId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Exam not found"));
+
+        if (!Objects.equals(exam.getUser().getId(), admin.getId())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Not allowed");
+        }
+        if (exam.getType() != ExamType.ADMIN_ASSIGNED) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Exam is not admin assigned");
+        }
+
+        ExamAssignment asg = assignmentRepo.findByExamIdAndAssignmentIdFetchAll(examId, assignmentId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found"));
+
+        ExamAttempt attempt = asg.getAttempt();
+        if (attempt == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Học viên chưa làm bài");
+        }
+
+        // ✅ Parse answersJson -> Map<questionId, rawAnswerObject>
+        //    NOTE: MCQ sẽ normalize A/B/C/D ở bước setSelectedAnswer cho MCQ
+        //          ESSAY giữ nguyên text (không normalize để tránh case "Anh..." -> bị hiểu thành A)
+        Map<Long, Object> answerRawMap = parseAnswersToRawMap(attempt.getAnswersJson());
+
+        // Load questions
+        List<ExamQuestion> eqs = examQuestionRepo.findAllByExamIdFetchQuestion(examId);
+
+        List<AdminAttemptReviewItemResponse> items = new ArrayList<>();
+        for (ExamQuestion eq : eqs) {
+            Question q = eq.getQuestion();
+
+            AdminAttemptReviewItemResponse it = new AdminAttemptReviewItemResponse();
+            it.setQuestionId(q.getId());
+            it.setQuestionType(q.getQuestionType() == null ? "—" : q.getQuestionType().name());
+            it.setContent(q.getContent());
+            it.setOptionsJson(q.getOptionsJson());
+            it.setCorrectAnswer(q.getCorrectAnswer());
+            it.setExplanation(q.getAnalysis());
+
+            Object rawAns = answerRawMap.get(q.getId());
+            String rawText = rawAns == null ? null : String.valueOf(rawAns);
+
+            boolean isCorrect = false;
+
+            if (q.getQuestionType() == QuestionType.MCQ) {
+                // ✅ normalize MCQ selected answer only
+                String selected = normalizeChoiceLoose(rawText); // A/B/C/D... (supports "1"/"0" too)
+                it.setSelectedAnswer(selected);
+
+                String correct = q.getCorrectAnswer();
+                if (correct != null && selected != null) {
+                    isCorrect = correct.trim().equalsIgnoreCase(selected.trim());
+                }
+            } else if (q.getQuestionType() == QuestionType.ESSAY) {
+                // ✅ IMPORTANT: for ESSAY, return student's text answer
+                // FE của m đang fallback đọc selectedAnswer / yourAnswerText.
+                // -> setSelectedAnswer = rawText để FE hiển thị được ngay.
+                it.setSelectedAnswer((rawText == null || rawText.isBlank()) ? null : rawText);
+                isCorrect = false; // essay chưa chấm
+            } else {
+                // fallback
+                it.setSelectedAnswer((rawText == null || rawText.isBlank()) ? null : rawText);
+                isCorrect = false;
+            }
+
+            it.setCorrect(isCorrect);
+            items.add(it);
+        }
+
+        AdminAssignmentReviewResponse resp = new AdminAssignmentReviewResponse();
+        resp.setExamId(examId);
+        resp.setAssignmentId(asg.getId());
+        resp.setAttemptId(attempt.getId());
+
+        resp.setStudentId(asg.getStudent().getId());
+        resp.setStudentFullName(asg.getStudent().getFullName());
+        resp.setStudentEmail(asg.getStudent().getEmail());
+
+        Integer scorePct = attempt.getScore() == null ? null : (int) Math.round(attempt.getScore());
+        resp.setScorePct(scorePct);
+
+        resp.setStartedAt(normalizeVn(asg.getStartedAt()));
+        resp.setSubmittedAt(normalizeVn(asg.getSubmittedAt()));
+
+        resp.setItems(items);
+        return resp;
+    }
+
+    // ========================= ANSWERS JSON PARSER (RAW) =========================
+
+    /**
+     * answersJson có thể có nhiều format:
+     * 1) {"2202":"B","2203":"A", "2208":"bài tự luận..."}
+     * 2) {"answers":{"2202":"B"}}
+     * 3) [{"questionId":2202,"answer":"B"}, {"questionId":2208,"answer":"..."}]
+     * 4) {"items":[{"questionId":2202,"selectedAnswer":"B"}]}
+     *
+     * => output Map<questionId, rawAnswerObject> (KHÔNG normalize ở đây)
+     */
+    private Map<Long, Object> parseAnswersToRawMap(String answersJson) {
+        if (answersJson == null || answersJson.isBlank()) return Map.of();
+
+        Object root;
+        try {
+            root = om.readValue(answersJson, Object.class);
+        } catch (Exception e) {
+            return Map.of();
+        }
+
+        Map<Long, Object> out = new HashMap<>();
+
+        if (root instanceof Map<?, ?> map) {
+            // unwrap common containers
+            Object maybeAnswers = getFirstNonNull(map, "answers", "data", "result");
+            Object maybeItems = getFirstNonNull(map, "items", "list", "content");
+
+            if (maybeAnswers instanceof Map<?, ?> answersMap) {
+                putAllFromKeyValueMapRaw(out, answersMap);
+                return out;
+            }
+
+            if (maybeItems instanceof List<?> list) {
+                putAllFromListObjectsRaw(out, list);
+                return out;
+            }
+
+            // direct map {"2202":"B","2208":"essay..."}
+            putAllFromKeyValueMapRaw(out, map);
+            return out;
+        }
+
+        if (root instanceof List<?> list) {
+            putAllFromListObjectsRaw(out, list);
+            return out;
+        }
+
+        return Map.of();
+    }
+
+    private Object getFirstNonNull(Map<?, ?> map, String... keys) {
+        for (String k : keys) {
+            Object v = map.get(k);
+            if (v != null) return v;
+        }
+        return null;
+    }
+
+    private void putAllFromKeyValueMapRaw(Map<Long, Object> out, Map<?, ?> map) {
+        for (Map.Entry<?, ?> e : map.entrySet()) {
+            if (e.getKey() == null) continue;
+            String keyStr = String.valueOf(e.getKey()).trim();
+            Long qid = tryParseLong(keyStr);
+            if (qid == null) continue;
+
+            Object rawVal = e.getValue();
+            if (rawVal == null) continue;
+
+            // keep raw (string/number/...)
+            out.put(qid, rawVal);
+        }
+    }
+
+    private void putAllFromListObjectsRaw(Map<Long, Object> out, List<?> list) {
+        for (Object obj : list) {
+            if (!(obj instanceof Map<?, ?> m)) continue;
+
+            Long qid = tryParseLong(String.valueOf(getFirstNonNull(m, "questionId", "qid", "id")));
+            if (qid == null) continue;
+
+            Object rawVal = getFirstNonNull(m, "selectedAnswer", "yourAnswer", "answer", "answerText", "textAnswer", "choice", "picked", "value");
+            if (rawVal == null) continue;
+
+            out.put(qid, rawVal);
+        }
+    }
+
+    private Long tryParseLong(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if (t.isBlank()) return null;
+        try {
+            return Long.parseLong(t);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // normalize: number/index/"1" -> A/B/C..., "b" -> B
+    private String normalizeChoiceLoose(String raw) {
+        if (raw == null) return null;
+        String t = raw.trim();
+        if (t.isBlank()) return null;
+
+        // numeric -> map index
+        if (t.matches("^\\d+$")) {
+            int n = Integer.parseInt(t);
+            // try 0-based then 1-based
+            String z = indexToChoice(n);
+            if (z != null) return z;
+            return indexToChoice(n - 1);
+        }
+
+        // only accept exact leading letter choices
+        String up = t.toUpperCase(Locale.ROOT);
+
+        // IMPORTANT: avoid essay like "Anh/chị..." being treated as "A"
+        // -> require the value to be very short OR match pattern "A" / "A." / "A)" / "A:"
+        if (up.matches("^[A-H]([\\s\\.:\\)\\]]*)$")) {
+            return String.valueOf(up.charAt(0));
+        }
+
+        // if server stored "A - ..." keep A
+        if (up.matches("^[A-H]\\s*[-–—].*$")) {
+            return String.valueOf(up.charAt(0));
+        }
+
+        return null;
+    }
+
+    private String indexToChoice(int idx) {
+        if (idx < 0) return null;
+        return switch (idx) {
+            case 0 -> "A";
+            case 1 -> "B";
+            case 2 -> "C";
+            case 3 -> "D";
+            case 4 -> "E";
+            case 5 -> "F";
+            case 6 -> "G";
+            case 7 -> "H";
+            default -> null;
+        };
+    }
+
     // ========================= UPDATE =========================
     @Override
     @Transactional
@@ -531,7 +771,8 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
 
                     try {
                         mailService.sendAssignedExamMail(s, exam, asg.getOpenAt(), asg.getDueAt());
-                    } catch (Exception ignored) {}
+                    } catch (Exception ignored) {
+                    }
                 }
             }
         }
@@ -586,8 +827,15 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
     private static final class QuestionMix {
         final int mcq;
         final int essay;
-        QuestionMix(int mcq, int essay) { this.mcq = mcq; this.essay = essay; }
-        int total() { return mcq + essay; }
+
+        QuestionMix(int mcq, int essay) {
+            this.mcq = mcq;
+            this.essay = essay;
+        }
+
+        int total() {
+            return mcq + essay;
+        }
     }
 
     private QuestionMix normalizeMix(AdminExamPreviewRequest req) {
@@ -598,7 +846,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
         Integer mcqRaw = req.getMcqCount();
         Integer essayRaw = req.getEssayCount();
 
-        // ✅ bắt buộc theo yêu cầu mới
         if (mcqRaw == null || essayRaw == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mcqCount and essayCount are required");
         }
