@@ -135,14 +135,29 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Chọn 1 trong 2: materialId hoặc inputText");
         }
 
-        int totalQuestions = normalizeTotalQuestions(req.getNumberOfQuestions());
+        // ✅ ADMIN chọn cơ cấu MCQ/ESSAY
+        QuestionMix mix = normalizeMix(req);
+        int totalQuestions = mix.total();
+
         LearningMaterial material = resolveMaterial(admin, materialId, inputText);
 
         GenerateQuestionsResponse generated =
-                questionGenerationService.generate(adminEmail, material.getId(), totalQuestions);
+                questionGenerationService.generate(adminEmail, material.getId(), mix.mcq, mix.essay);
 
         if (generated == null || generated.getQuestions() == null || generated.getQuestions().size() != totalQuestions) {
             throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI response invalid (question count mismatch)");
+        }
+
+        // ✅ Extra safety: verify distribution (MCQ/ESSAY)
+        long mcqGot = generated.getQuestions().stream()
+                .filter(q -> q != null && q.getQuestionType() == QuestionType.MCQ)
+                .count();
+        long essayGot = generated.getQuestions().stream()
+                .filter(q -> q != null && q.getQuestionType() == QuestionType.ESSAY)
+                .count();
+
+        if (mcqGot != mix.mcq || essayGot != mix.essay) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI response invalid (type count mismatch)");
         }
 
         String previewToken = UUID.randomUUID().toString();
@@ -196,17 +211,22 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
         Exam exam = new Exam();
         exam.setUser(admin);
         exam.setType(ExamType.ADMIN_ASSIGNED);
+
+        // PassScore: vẫn theo rule hệ thống (m có thể cho admin config sau)
         exam.setPassScore(settingsService.getPassScore());
+
         exam.setCreatedAt(nowVn()); // ✅ VN time
 
         String title = safeTitle(req.getTitle());
         if (title == null || title.isBlank()) title = safeTitle(cached.generated.getExamTitle());
         exam.setTitle(title);
 
-        int duration = (req.getDurationMinutes() != null)
-                ? clamp(req.getDurationMinutes(), MIN_DURATION_MINUTES, MAX_DURATION_MINUTES)
-                : computeDurationMinutes(items.size());
-        exam.setDurationMinutes(duration);
+        // ✅ durationMinutes do ADMIN chọn (required) - KHÔNG dùng SystemSettings
+        Integer durationReq = req.getDurationMinutes();
+        if (durationReq == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "durationMinutes is required");
+        }
+        exam.setDurationMinutes(clamp(durationReq, MIN_DURATION_MINUTES, MAX_DURATION_MINUTES));
 
         exam = examRepo.save(exam);
 
@@ -225,10 +245,13 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
                 q.setCorrectAnswer(normalizeChoice(item.getCorrectAnswer()));
                 q.setOptionsJson(writeOptionsJson(item.getOptions()));
                 q.setAnalysis(safeTrim(item.getAnalysis(), 2000));
-            } else {
+            } else if (item.getQuestionType() == QuestionType.ESSAY) {
                 q.setCorrectAnswer(null);
                 q.setOptionsJson(null);
                 q.setAnalysis(writeRubricJson(item.getSampleAnswer(), item.getKeywords(), item.getMaxScore()));
+            } else {
+                // nếu sau này có type mới mà AI trả về -> fail fast
+                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI response invalid (unsupported questionType)");
             }
 
             q = questionRepo.save(q);
@@ -249,6 +272,12 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Một số học viên không tồn tại");
         }
 
+        // clamp override duration nếu có
+        Integer durationOverride = req.getDurationMinutesOverride();
+        if (durationOverride != null) {
+            durationOverride = clamp(durationOverride, MIN_DURATION_MINUTES, MAX_DURATION_MINUTES);
+        }
+
         int created = 0;
         for (User s : students) {
             if (assignmentRepo.existsByExamIdAndStudentId(exam.getId(), s.getId())) continue;
@@ -262,7 +291,7 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
             asg.setOpenAt(openAt);
             asg.setDueAt(dueAt);
 
-            asg.setDurationMinutesOverride(req.getDurationMinutesOverride());
+            asg.setDurationMinutesOverride(durationOverride);
             asg.setStatus(AssignmentStatus.ASSIGNED);
 
             assignmentRepo.save(asg);
@@ -277,6 +306,7 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
         out.put("examId", exam.getId());
         out.put("assignedCount", created);
         out.put("message", "Tạo bài kiểm tra và gán học viên thành công");
+
         practicePreviewCache.invalidate(key);
         return out;
     }
@@ -297,7 +327,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
 
         Map<Long, Object[]> agg = new HashMap<>();
         for (Object[] row : assignmentRepo.aggByExamIds(examIds)) {
-            // row[0]=examId, row[1]=count, row[2]=minOpenAt, row[3]=maxDueAt
             agg.put((Long) row[0], row);
         }
 
@@ -306,7 +335,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
             Object[] row = agg.get(e.getId());
             long assignedCount = row == null ? 0L : (Long) row[1];
 
-            // ✅ normalize output for stability (no nanos)
             LocalDateTime openAt = row == null ? null : normalizeVn((LocalDateTime) row[2]);
             LocalDateTime dueAt  = row == null ? null : normalizeVn((LocalDateTime) row[3]);
 
@@ -442,14 +470,13 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
 
         List<ExamAssignment> current = assignmentRepo.findAllByExamId(examId);
 
-        // update time/override for all
         for (ExamAssignment a : current) {
             if (req.getOpenAt() != null || req.getDueAt() != null) {
                 a.setOpenAt(openAt);
                 a.setDueAt(dueAt);
             }
             if (req.getDurationMinutesOverride() != null) {
-                a.setDurationMinutesOverride(req.getDurationMinutesOverride());
+                a.setDurationMinutesOverride(clamp(req.getDurationMinutesOverride(), MIN_DURATION_MINUTES, MAX_DURATION_MINUTES));
             }
         }
 
@@ -468,7 +495,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
 
             Set<Long> target = new HashSet<>(targetIds);
 
-            // remove: only ASSIGNED can be removed
             for (ExamAssignment a : current) {
                 if (!target.contains(a.getStudent().getId()) && a.getStatus() == AssignmentStatus.ASSIGNED) {
                     cheatingEventRepo.deleteAllByAssignmentId(a.getId());
@@ -477,7 +503,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
                 }
             }
 
-            // add new
             List<Long> addIds = targetIds.stream()
                     .filter(id -> !currentIds.contains(id))
                     .collect(Collectors.toList());
@@ -493,7 +518,12 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
                     asg.setOpenAt(openAt);
                     asg.setDueAt(dueAt);
 
-                    asg.setDurationMinutesOverride(req.getDurationMinutesOverride());
+                    Integer durationOverride = req.getDurationMinutesOverride();
+                    if (durationOverride != null) {
+                        durationOverride = clamp(durationOverride, MIN_DURATION_MINUTES, MAX_DURATION_MINUTES);
+                    }
+                    asg.setDurationMinutesOverride(durationOverride);
+
                     asg.setStatus(AssignmentStatus.ASSIGNED);
 
                     assignmentRepo.save(asg);
@@ -552,6 +582,42 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
     }
 
     // ========================= HELPERS =========================
+
+    private static final class QuestionMix {
+        final int mcq;
+        final int essay;
+        QuestionMix(int mcq, int essay) { this.mcq = mcq; this.essay = essay; }
+        int total() { return mcq + essay; }
+    }
+
+    private QuestionMix normalizeMix(AdminExamPreviewRequest req) {
+        if (req == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Request is required");
+        }
+
+        Integer mcqRaw = req.getMcqCount();
+        Integer essayRaw = req.getEssayCount();
+
+        // ✅ bắt buộc theo yêu cầu mới
+        if (mcqRaw == null || essayRaw == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mcqCount and essayCount are required");
+        }
+
+        int mcq = mcqRaw;
+        int essay = essayRaw;
+
+        if (mcq < 0 || essay < 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "mcqCount/essayCount must be >= 0");
+        }
+
+        int total = mcq + essay;
+        if (total < 1 || total > MAX_QUESTIONS) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Total questions must be 1.." + MAX_QUESTIONS);
+        }
+
+        return new QuestionMix(mcq, essay);
+    }
+
     private LearningMaterial resolveMaterial(User owner, Long materialId, String inputText) {
         if (materialId != null) {
             LearningMaterial material = materialRepo.findById(materialId)
@@ -583,21 +649,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
         m.setExtractedText(raw);
         m.setStatus(MaterialStatus.EXTRACTED);
         return materialRepo.save(m);
-    }
-
-    private int normalizeTotalQuestions(Integer n) {
-        int configured = Math.max(1, settingsService.getMcqQuestionCount() + settingsService.getEssayQuestionCount());
-        int val = (n == null) ? configured : n;
-        if (val < 1 || val > MAX_QUESTIONS) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "numberOfQuestions must be 1.." + MAX_QUESTIONS);
-        }
-        return val;
-    }
-
-    private int computeDurationMinutes(int totalQuestions) {
-        double mpq = settingsService.getMinutesPerQuestion();
-        int minutes = (int) Math.ceil(Math.max(1.0, mpq) * Math.max(1, totalQuestions));
-        return clamp(minutes, MIN_DURATION_MINUTES, MAX_DURATION_MINUTES);
     }
 
     private int clamp(int v, int min, int max) {
@@ -643,7 +694,6 @@ public class AdminAssignedExamServiceImpl implements AdminAssignedExamService {
         }
     }
 
-    @SuppressWarnings("unchecked")
     private List<String> normalizeOptions(Object rawOptions) {
         if (rawOptions == null) return List.of();
 
