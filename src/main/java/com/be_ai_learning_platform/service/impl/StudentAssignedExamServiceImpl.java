@@ -469,4 +469,119 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
         }
         return out.isEmpty() ? null : out;
     }
+    @Override
+    @Transactional(readOnly = true)
+    public String getStudyGuide(String email, Long assignmentId) {
+        User me = requireMe(email);
+
+        ExamAssignment asg = assignmentRepo.findByIdAndStudentId(assignmentId, me.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found"));
+
+        if (asg.getAttempt() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bạn chưa bắt đầu bài kiểm tra");
+        }
+
+        ExamAttempt attempt = attemptRepo.findByIdAndUserId(asg.getAttempt().getId(), me.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attempt not found"));
+
+        // đã generate lúc submit rồi
+        return attempt.getStudyGuide();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public AttemptReviewResponse getReview(String email, Long assignmentId) {
+        User me = requireMe(email);
+
+        ExamAssignment asg = assignmentRepo.findByIdAndStudentId(assignmentId, me.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Assignment not found"));
+
+        if (asg.getAttempt() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bạn chưa bắt đầu bài kiểm tra");
+        }
+
+        ExamAttempt attempt = attemptRepo.findByIdAndUserId(asg.getAttempt().getId(), me.getId())
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attempt not found"));
+
+        if (attempt.getScore() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Bạn chưa nộp bài");
+        }
+
+        List<Map<String, Object>> storedAnswers = readAnswersJson(attempt.getAnswersJson());
+        Map<Long, Map<String, Object>> answerMap = indexByQuestionId(storedAnswers);
+
+        List<ExamQuestion> eqs = examQuestionRepo.findAllByExamIdFetchQuestion(asg.getExam().getId());
+        if (eqs == null || eqs.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Exam has no questions");
+        }
+
+        List<AttemptReviewItemResponse> items = new ArrayList<>();
+        int correctCount = 0;
+        int totalMcq = 0;
+
+        for (ExamQuestion eq : eqs) {
+            Question q = eq.getQuestion();
+            if (q == null) continue;
+
+            Map<String, Object> ans = answerMap.get(q.getId());
+            String selected = ans == null ? null : normalizeChoice((String) ans.get("selectedAnswer"));
+            String text = ans == null ? null : safeTrim((String) ans.get("textAnswer"), 5000);
+
+            AttemptReviewItemResponse ri = new AttemptReviewItemResponse();
+            ri.setQuestionId(q.getId());
+            ri.setQuestionType(q.getQuestionType());
+            ri.setContent(q.getContent());
+
+            if (q.getQuestionType() == QuestionType.MCQ) {
+                totalMcq++;
+                String correct = normalizeChoice(q.getCorrectAnswer());
+                boolean isCorrect = correct != null && correct.equals(selected);
+                if (isCorrect) correctCount++;
+
+                ri.setOptions(parseOptionsMap(q.getOptionsJson()));
+                ri.setCorrectAnswer(q.getCorrectAnswer());
+                ri.setSelectedAnswer(selected);
+                ri.setIsCorrect(isCorrect);
+                ri.setFeedback(q.getAnalysis());
+            } else {
+                ri.setOptions(null);
+                ri.setCorrectAnswer(null);
+                ri.setSelectedAnswer(null);
+                ri.setYourAnswer(text);
+                ri.setIsCorrect(null);
+                ri.setFeedback(q.getAnalysis());
+            }
+
+            items.add(ri);
+        }
+
+        AttemptReviewResponse resp = new AttemptReviewResponse();
+        resp.setScore(attempt.getScore());
+        resp.setCorrectCount(correctCount);
+        resp.setTotalQuestions(totalMcq); // PracticeReviewDialog dùng cái này
+        resp.setItems(items);
+        return resp;
+    }
+
+    private List<Map<String, Object>> readAnswersJson(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return om.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private Map<Long, Map<String, Object>> indexByQuestionId(List<Map<String, Object>> list) {
+        Map<Long, Map<String, Object>> m = new HashMap<>();
+        for (Map<String, Object> a : list) {
+            if (a == null) continue;
+            Object idObj = a.get("questionId");
+            if (idObj == null) continue;
+            Long qid = null;
+            try { qid = Long.valueOf(String.valueOf(idObj)); } catch (Exception ignored) {}
+            if (qid != null) m.put(qid, a);
+        }
+        return m;
+    }
 }
