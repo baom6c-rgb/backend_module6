@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.AI.GeminiResponsesClient;
+import com.be_ai_learning_platform.AI.AiResponsesRouter;
 import com.be_ai_learning_platform.service.AiStudyGuideService;
 import org.springframework.stereotype.Service;
 
@@ -20,9 +20,9 @@ public class AiStudyGuideServiceImpl implements AiStudyGuideService {
 
     private static final int MAX_STUDY_GUIDE_CHARS = 9000;
 
-    private final GeminiResponsesClient responsesClient;
+    private final AiResponsesRouter responsesClient;
 
-    public AiStudyGuideServiceImpl(GeminiResponsesClient responsesClient) {
+    public AiStudyGuideServiceImpl(AiResponsesRouter responsesClient) {
         this.responsesClient = responsesClient;
     }
 

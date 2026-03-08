@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.AI.GeminiResponsesClient;
+import com.be_ai_learning_platform.AI.AiResponsesRouter;
 import com.be_ai_learning_platform.dto.request.GeneratePracticeSessionRequest;
 import com.be_ai_learning_platform.dto.request.PracticeGenerateRequest;
 import com.be_ai_learning_platform.dto.request.SelectTopicRequest;
@@ -85,7 +85,7 @@ public class PracticeServiceImpl implements PracticeService {
 
     private final QuestionGenerationService questionGenerationService;
 
-    private final GeminiResponsesClient responsesClient;
+    private final AiResponsesRouter responsesClient;
     private final AiStudyGuideService aiStudyGuideService;
     private final AiPracticeFeedbackService aiPracticeFeedbackService;
     private final ObjectMapper om;
@@ -112,7 +112,7 @@ public class PracticeServiceImpl implements PracticeService {
             QuestionRepository questionRepo,
             ExamQuestionRepository examQuestionRepo,
             QuestionGenerationService questionGenerationService,
-            GeminiResponsesClient responsesClient,
+            AiResponsesRouter responsesClient,
             ObjectMapper om,
             Cache<String, Object> practiceSessionCache,
             SystemSettingsService settingsService,

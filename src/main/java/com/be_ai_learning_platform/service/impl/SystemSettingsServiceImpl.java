@@ -28,11 +28,8 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     private static final Long SETTINGS_ID = 1L;
 
     private final SystemSettingsRepository repo;
-
-    // ✅ NEW: secret store (file encrypted + hot cache)
     private final SecretStore secretStore;
 
-    // ===== DEFAULT (chỉ dùng để INIT lần đầu) =====
     @Value("${app.settings.default.passScore:80}")
     private int defaultPassScore;
 
@@ -48,33 +45,24 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Value("${app.settings.default.adminEmails:}")
     private String defaultAdminEmails;
 
-    // ===== Practice defaults (NEW) =====
     @Value("${app.settings.default.practice.mcqQuestionCount:8}")
     private int defaultMcqQuestionCount;
 
     @Value("${app.settings.default.practice.essayQuestionCount:2}")
     private int defaultEssayQuestionCount;
 
-    // ===== Monthly report defaults =====
     @Value("${app.settings.default.monthlyReport.enabled:false}")
     private boolean defaultMonthlyReportEnabled;
 
-    /**
-     * 0 = last day
-     */
     @Value("${app.settings.default.monthlyReport.dayOfMonth:0}")
     private int defaultMonthlyReportDayOfMonth;
 
-    /**
-     * HH:mm
-     */
     @Value("${app.settings.default.monthlyReport.time:23:59}")
     private String defaultMonthlyReportTime;
 
     @Value("${app.settings.default.monthlyReport.timeZone:Asia/Bangkok}")
     private String defaultMonthlyReportTimeZone;
 
-    // ===== AI DEFAULTS (chỉ dùng để INIT lần đầu) =====
     @Value("${app.settings.default.ai.provider:GEMINI}")
     private String defaultAiProvider;
 
@@ -87,17 +75,12 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Value("${app.settings.default.ai.enabled:true}")
     private boolean defaultAiEnabled;
 
-    /**
-     * Có thể set từ ENV để init lần đầu (không bắt buộc).
-     * ✅ NEW: bây giờ sẽ init vào SecretStore (file), không lưu DB nữa.
-     */
     @Value("${app.settings.default.ai.apiKey:}")
     private String defaultAiApiKey;
 
     @PostConstruct
     public void initIfMissing() {
         if (repo.existsById(SETTINGS_ID)) {
-            // even if settings row exists, we can still seed secret store once (optional)
             seedAiKeyToSecretStoreIfProvided();
             return;
         }
@@ -105,14 +88,12 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         SystemSettings s = new SystemSettings();
         s.setId(SETTINGS_ID);
 
-        // ===== base =====
         s.setPassScore(defaultPassScore);
         s.setMinutesPerQuestion(defaultMinutesPerQuestion);
         s.setRetestCooldownMinutes(defaultRetestCooldownMinutes);
         s.setEmailNotificationsEnabled(defaultEmailEnabled);
         s.setAdminEmails(normalizeEmails(defaultAdminEmails));
 
-        // ===== practice defaults (NEW) =====
         int mcq = Math.max(0, defaultMcqQuestionCount);
         int essay = Math.max(0, defaultEssayQuestionCount);
         if (mcq + essay <= 0) {
@@ -122,7 +103,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         s.setMcqQuestionCount(mcq);
         s.setEssayQuestionCount(essay);
 
-        // ===== monthly report defaults =====
         s.setMonthlyReportEnabled(defaultMonthlyReportEnabled);
 
         int dom = Math.max(0, Math.min(31, defaultMonthlyReportDayOfMonth));
@@ -143,22 +123,17 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
             tz = "Asia/Bangkok";
         }
         s.setMonthlyReportTimeZone(tz);
-
         s.setMonthlyReportLastSentYearMonth(null);
 
-        // ===== AI defaults =====
-        s.setAiProvider(normalizeProvider(defaultAiProvider));
-        s.setAiModel(normalizeModel(defaultAiModel));
+        String provider = normalizeProvider(defaultAiProvider);
+        s.setAiProvider(provider);
+        s.setAiModel(normalizeModel(provider, defaultAiModel));
         s.setAiTemperature(clamp01(defaultAiTemperature));
         s.setAiEnabled(defaultAiEnabled);
-
-        // ✅ IMPORTANT: do NOT save api key in DB anymore
-        // s.setAiApiKey(normalizeOptionalSecret(defaultAiApiKey));  // removed
 
         s.setUpdatedAt(LocalDateTime.now());
         repo.save(s);
 
-        // ✅ seed api key to SecretStore if provided via ENV/property
         seedAiKeyToSecretStoreIfProvided();
     }
 
@@ -167,13 +142,12 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
             String k = normalizeOptionalSecret(defaultAiApiKey);
             if (k == null) return;
 
-            // only seed if secret store currently has no key
-            String masked = secretStore.maskAiApiKey();
+            String provider = normalizeProvider(getSettings().getAiProvider());
+            String masked = secretStore.maskAiApiKey(provider);
             if (masked == null || masked.isBlank()) {
-                secretStore.writeAiApiKey(k);
+                secretStore.writeAiApiKey(provider, k);
             }
         } catch (Exception ignored) {
-            // don't block app start
         }
     }
 
@@ -183,8 +157,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return repo.findById(SETTINGS_ID)
                 .orElseThrow(() -> new IllegalStateException("SystemSettings not initialized"));
     }
-
-    // ===================== for other services =====================
 
     @Override
     @Transactional(readOnly = true)
@@ -223,7 +195,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
                 .toArray(String[]::new);
     }
 
-    // ===== Practice getters (NEW) =====
     @Override
     @Transactional(readOnly = true)
     public int getMcqQuestionCount() {
@@ -238,8 +209,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return v == null ? 0 : Math.max(0, v);
     }
 
-    // ===================== Admin API (base settings) =====================
-
     @Override
     @Transactional(readOnly = true)
     public SystemSettingsResponse get() {
@@ -250,7 +219,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     public SystemSettingsResponse update(UpdateSystemSettingsRequest req) {
         if (req == null) throw new IllegalArgumentException("Request is null");
 
-        // guardrails (base)
         if (req.getMinutesPerQuestion() == null || req.getMinutesPerQuestion() <= 0) {
             throw new IllegalArgumentException("minutesPerQuestion must be > 0");
         }
@@ -261,7 +229,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
             throw new IllegalArgumentException("retestCooldownMinutes must be 0..1440");
         }
 
-        // practice validation (NEW)
         if (req.getMcqQuestionCount() == null || req.getMcqQuestionCount() < 0) {
             throw new IllegalArgumentException("mcqQuestionCount must be >= 0");
         }
@@ -272,7 +239,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
             throw new IllegalArgumentException("Total questions must be > 0");
         }
 
-        // monthly optional validation
         Integer dayOfMonth = req.getMonthlyReportDayOfMonth();
         if (dayOfMonth != null && (dayOfMonth < 0 || dayOfMonth > 31)) {
             throw new IllegalArgumentException("monthlyReportDayOfMonth must be 0..31 (0 = last day)");
@@ -302,18 +268,15 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
 
         SystemSettings s = getSettings();
 
-        // base updates
         s.setPassScore(req.getPassScore());
         s.setMinutesPerQuestion(req.getMinutesPerQuestion());
         s.setRetestCooldownMinutes(req.getRetestCooldownMinutes());
         s.setEmailNotificationsEnabled(Boolean.TRUE.equals(req.getEmailNotificationsEnabled()));
         s.setAdminEmails(normalizeEmails(req.getAdminEmails()));
 
-        // practice updates (NEW)
         s.setMcqQuestionCount(Math.max(0, req.getMcqQuestionCount()));
         s.setEssayQuestionCount(Math.max(0, req.getEssayQuestionCount()));
 
-        // monthly updates (optional)
         if (req.getMonthlyReportEnabled() != null) {
             s.setMonthlyReportEnabled(Boolean.TRUE.equals(req.getMonthlyReportEnabled()));
         }
@@ -333,8 +296,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return toResponse(s);
     }
 
-    // ===================== AI Settings (Admin tab: Model AI) =====================
-
     @Override
     @Transactional(readOnly = true)
     public AiSettingsResponse getAi() {
@@ -346,12 +307,11 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         if (req == null) throw new IllegalArgumentException("Request is null");
 
         String provider = normalizeProvider(req.aiProvider());
-        String model = normalizeModel(req.aiModel());
+        String model = normalizeModel(provider, req.aiModel());
         Double temp = req.aiTemperature();
         Boolean enabled = req.aiEnabled();
 
-        // currently only GEMINI is implemented
-        if (!"GEMINI".equals(provider)) {
+        if (!"GEMINI".equals(provider) && !"OPENROUTER".equals(provider)) {
             throw new IllegalArgumentException("aiProvider not supported: " + provider);
         }
         if (temp == null) {
@@ -371,10 +331,9 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         s.setAiTemperature(clamp01(temp));
         s.setAiEnabled(Boolean.TRUE.equals(enabled));
 
-        // ✅ NEW: update key in SecretStore only (hot), never write to DB
         String newKey = normalizeOptionalSecret(req.aiApiKey());
         if (newKey != null) {
-            secretStore.writeAiApiKey(newKey);
+            secretStore.writeAiApiKey(provider, newKey);
         }
 
         s.setUpdatedAt(LocalDateTime.now());
@@ -382,20 +341,19 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
 
         return toAiResponse(s);
     }
+
     @Override
     public AiSettingsResponse clearAiApiKey() {
         SystemSettings s = getSettings();
+        String provider = normalizeProvider(s.getAiProvider());
 
-        // clear secret
-        secretStore.clearAiApiKey();
+        secretStore.clearAiApiKey(provider);
 
-        // update timestamp to reflect change
         s.setUpdatedAt(LocalDateTime.now());
         repo.save(s);
 
         return toAiResponse(s);
     }
-    // ===================== For AI clients =====================
 
     @Override
     @Transactional(readOnly = true)
@@ -404,8 +362,17 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         if (!Boolean.TRUE.equals(s.getAiEnabled())) {
             throw new IllegalStateException("AI is disabled by admin");
         }
-        // ✅ NEW: read from SecretStore (hot, not DB)
-        return secretStore.requireAiApiKey();
+        return secretStore.requireAiApiKey(normalizeProvider(s.getAiProvider()));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String requireAiApiKey(String provider) {
+        SystemSettings s = getSettings();
+        if (!Boolean.TRUE.equals(s.getAiEnabled())) {
+            throw new IllegalStateException("AI is disabled by admin");
+        }
+        return secretStore.requireAiApiKey(normalizeProvider(provider));
     }
 
     @Override
@@ -417,7 +384,8 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
     @Override
     @Transactional(readOnly = true)
     public String getAiModel() {
-        return normalizeModel(getSettings().getAiModel());
+        SystemSettings s = getSettings();
+        return normalizeModel(normalizeProvider(s.getAiProvider()), s.getAiModel());
     }
 
     @Override
@@ -433,8 +401,6 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return Boolean.TRUE.equals(getSettings().getAiEnabled());
     }
 
-    // ===================== mapping =====================
-
     private SystemSettingsResponse toResponse(SystemSettings s) {
         SystemSettingsResponse r = new SystemSettingsResponse();
 
@@ -445,11 +411,9 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         r.setEmailNotificationsEnabled(s.getEmailNotificationsEnabled());
         r.setAdminEmails(s.getAdminEmails());
 
-        // practice (NEW)
         r.setMcqQuestionCount(s.getMcqQuestionCount());
         r.setEssayQuestionCount(s.getEssayQuestionCount());
 
-        // monthly report
         r.setMonthlyReportEnabled(s.getMonthlyReportEnabled());
         r.setMonthlyReportDayOfMonth(s.getMonthlyReportDayOfMonth());
         r.setMonthlyReportTime(s.getMonthlyReportTime() == null ? null : s.getMonthlyReportTime().toString());
@@ -460,25 +424,20 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return r;
     }
 
-    /**
-     * ✅ Keep contract: masked key for UI, never expose full secret.
-     * ✅ NEW: mask from SecretStore (not DB).
-     */
     private AiSettingsResponse toAiResponse(SystemSettings s) {
         AiSettingsResponse r = new AiSettingsResponse();
 
-        r.setAiProvider(normalizeProvider(s.getAiProvider()));
-        r.setAiModel(normalizeModel(s.getAiModel()));
+        String provider = normalizeProvider(s.getAiProvider());
+
+        r.setAiProvider(provider);
+        r.setAiModel(normalizeModel(provider, s.getAiModel()));
         r.setAiTemperature(s.getAiTemperature() == null ? 0.0 : clamp01(s.getAiTemperature()));
         r.setAiEnabled(Boolean.TRUE.equals(s.getAiEnabled()));
-
-        r.setAiApiKeyMasked(secretStore.maskAiApiKey());
+        r.setAiApiKeyMasked(secretStore.maskAiApiKey(provider));
         r.setUpdatedAt(s.getUpdatedAt());
 
         return r;
     }
-
-    // ===================== utils =====================
 
     private String normalizeEmails(String csv) {
         if (csv == null) return "";
@@ -494,9 +453,16 @@ public class SystemSettingsServiceImpl implements SystemSettingsService {
         return s.trim().toUpperCase();
     }
 
-    private String normalizeModel(String s) {
-        if (s == null || s.isBlank()) return "gemini-2.5-flash";
-        return s.trim();
+    private String normalizeModel(String provider, String model) {
+        if (model != null && !model.isBlank()) {
+            return model.trim();
+        }
+
+        String p = normalizeProvider(provider);
+        if ("OPENROUTER".equals(p)) {
+            return "deepseek/deepseek-chat";
+        }
+        return "gemini-2.5-flash";
     }
 
     private double clamp01(double v) {

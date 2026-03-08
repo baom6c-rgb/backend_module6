@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.AI.GeminiResponsesClient;
+import com.be_ai_learning_platform.AI.AiResponsesRouter;
 import com.be_ai_learning_platform.dto.response.ChatAskResponse;
 import com.be_ai_learning_platform.dto.response.ChatMessageResponse;
 import com.be_ai_learning_platform.dto.response.ChatSessionResponse;
@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
 @Transactional
 public class ChatbotServiceImpl implements ChatbotService {
 
-    private final GeminiResponsesClient responsesClient;
+    private final AiResponsesRouter responsesClient;
     private final UserRepository userRepo;
     private final LearningMaterialRepository materialRepo;
     private final ChatSessionRepository sessionRepo;
