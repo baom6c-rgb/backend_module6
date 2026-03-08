@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.AI.GeminiStructuredClient;
+import com.be_ai_learning_platform.AI.AiStructuredRouter;
 import com.be_ai_learning_platform.dto.response.TopicOptionResponse;
 import com.be_ai_learning_platform.entity.LearningMaterial;
 import com.be_ai_learning_platform.entity.User;
@@ -73,14 +73,14 @@ public class TopicSelectionServiceImpl implements TopicSelectionService {
 
     private final UserRepository userRepo;
     private final LearningMaterialRepository materialRepo;
-    private final GeminiStructuredClient ai;
+    private final AiStructuredRouter ai;
     private final Cache<String, Object> practiceSessionCache;
     private final ObjectMapper om;
 
     public TopicSelectionServiceImpl(
             UserRepository userRepo,
             LearningMaterialRepository materialRepo,
-            GeminiStructuredClient ai,
+            AiStructuredRouter ai,
             Cache<String, Object> practiceSessionCache,
             ObjectMapper om
     ) {

@@ -2,22 +2,19 @@ package com.be_ai_learning_platform.security.secret;
 
 public interface SecretStore {
 
-    /**
-     * Returns AI API key if exists and non-blank.
-     * Throw IllegalStateException if empty (to keep current service behavior).
-     */
     String requireAiApiKey();
 
-    /**
-     * Persist raw API key and make it effective immediately (hot).
-     */
+    String requireAiApiKey(String provider);
+
     void writeAiApiKey(String rawKey);
 
-    /**
-     * Returns masked key for UI display (never expose full key).
-     * Example: abc****xyz
-     */
+    void writeAiApiKey(String provider, String rawKey);
+
     String maskAiApiKey();
 
+    String maskAiApiKey(String provider);
+
     void clearAiApiKey();
+
+    void clearAiApiKey(String provider);
 }

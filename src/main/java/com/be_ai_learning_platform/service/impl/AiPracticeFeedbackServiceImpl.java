@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.AI.GeminiResponsesClient;
+import com.be_ai_learning_platform.AI.AiResponsesRouter;
 import com.be_ai_learning_platform.dto.response.AttemptReviewItemResponse;
 import com.be_ai_learning_platform.entity.enums.QuestionType;
 import com.be_ai_learning_platform.service.AiPracticeFeedbackService;
@@ -15,9 +15,9 @@ public class AiPracticeFeedbackServiceImpl implements AiPracticeFeedbackService 
 
     private static final int MAX_AI_FEEDBACK_CHARS = 4200;
 
-    private final GeminiResponsesClient responsesClient;
+    private final AiResponsesRouter responsesClient;
 
-    public AiPracticeFeedbackServiceImpl(GeminiResponsesClient responsesClient) {
+    public AiPracticeFeedbackServiceImpl(AiResponsesRouter responsesClient) {
         this.responsesClient = responsesClient;
     }
 

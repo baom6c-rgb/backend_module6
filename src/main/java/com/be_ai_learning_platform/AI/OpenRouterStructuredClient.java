@@ -7,20 +7,23 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 @Component
-public class GeminiStructuredClient {
+public class OpenRouterStructuredClient {
+
+    private static final int MAX_OUTPUT_TOKENS = 4000;
 
     private final RestClient restClient;
-    private final GeminiProperties props;
+    private final OpenRouterProperties props;
     private final SystemSettingsService settingsService;
 
-    public GeminiStructuredClient(RestClient geminiRestClient,
-                                  GeminiProperties props,
-                                  SystemSettingsService settingsService) {
-        this.restClient = geminiRestClient;
+    public OpenRouterStructuredClient(RestClient openRouterRestClient,
+                                      OpenRouterProperties props,
+                                      SystemSettingsService settingsService) {
+        this.restClient = openRouterRestClient;
         this.props = props;
         this.settingsService = settingsService;
     }
@@ -34,75 +37,84 @@ public class GeminiStructuredClient {
         }
 
         String provider = settingsService.getAiProvider();
-        if (!"GEMINI".equalsIgnoreCase(provider)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "AI provider is not GEMINI");
+        if (!"OPENROUTER".equalsIgnoreCase(provider)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "AI provider is not OPENROUTER");
         }
 
         String model = settingsService.getAiModel();
         if (model == null || model.isBlank()) {
-            model = props == null ? null : props.model();
+            model = props == null ? null : props.defaultModel();
         }
         if (model == null || model.isBlank()) {
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Gemini model is not configured");
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "OpenRouter model is not configured");
         }
 
         final String apiKey;
         try {
-            apiKey = settingsService.requireAiApiKey("GEMINI");
+            apiKey = settingsService.requireAiApiKey("OPENROUTER");
         } catch (IllegalStateException ex) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, ex.getMessage(), ex);
         }
 
         double temperature = settingsService.getAiTemperature();
+
         String finalPrompt = prompt + "\n\n" + jsonContract;
 
-        Map<String, Object> body = Map.of(
-                "contents", List.of(
-                        Map.of("role", "user", "parts", List.of(Map.of("text", finalPrompt)))
-                ),
-                "generationConfig", Map.of(
-                        "temperature", temperature,
-                        "topP", 0.1,
-                        "maxOutputTokens", 24576
-                )
-        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", model);
+        body.put("temperature", temperature);
+        body.put("max_tokens", MAX_OUTPUT_TOKENS);
+        body.put("messages", List.of(
+                Map.of("role", "system", "content", "Return ONLY valid JSON. No markdown."),
+                Map.of("role", "user", "content", finalPrompt)
+        ));
 
         try {
             @SuppressWarnings("unchecked")
             Map<String, Object> res = restClient.post()
-                    .uri("/v1beta/models/{model}:generateContent?key={key}", model, apiKey)
+                    .uri("/chat/completions")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .headers(h -> {
+                        if (props != null && props.httpReferer() != null && !props.httpReferer().isBlank()) {
+                            h.add("HTTP-Referer", props.httpReferer().trim());
+                        }
+                        if (props != null && props.appTitle() != null && !props.appTitle().isBlank()) {
+                            h.add("X-OpenRouter-Title", props.appTitle().trim());
+                        }
+                    })
                     .body(body)
                     .retrieve()
                     .body(Map.class);
 
-            String text = GeminiTextExtractor.extractText(res);
+            String text = OpenRouterTextExtractor.extractText(res);
             if (text == null || text.isBlank()) {
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Gemini returned empty content");
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "OpenRouter returned empty content"
+                );
             }
 
             String sanitized = sanitizeJsonText(text);
             if (sanitized == null || sanitized.isBlank()) {
-                throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "Gemini returned blank JSON content");
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_GATEWAY,
+                        "OpenRouter returned blank JSON content"
+                );
             }
 
             return sanitized;
 
-        } catch (RestClientResponseException e) {
-            String bodyStr = e.getResponseBodyAsString();
-            String brief = bodyStr == null ? "" : bodyStr.trim();
-            if (brief.length() > 600) {
-                brief = brief.substring(0, 600) + "...";
-            }
-
+        } catch (RestClientResponseException ex) {
+            String msg = ex.getResponseBodyAsString();
             throw new ResponseStatusException(
                     HttpStatus.BAD_GATEWAY,
-                    "Gemini API error " + e.getRawStatusCode() + (brief.isBlank() ? "" : (": " + brief)),
-                    e
+                    "OpenRouter call failed: HTTP " + ex.getRawStatusCode() + " - " + msg,
+                    ex
             );
-        } catch (ResponseStatusException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "AI request failed", e);
+        } catch (ResponseStatusException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "OpenRouter call failed", ex);
         }
     }
 

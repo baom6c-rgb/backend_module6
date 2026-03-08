@@ -22,6 +22,7 @@ public interface SystemSettingsService {
 
     // ===== for AI clients =====
     String requireAiApiKey();
+    String requireAiApiKey(String provider);
     String getAiProvider();
     String getAiModel();
     double getAiTemperature();
