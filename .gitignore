@@ -2,6 +2,7 @@
 .env
 *.env
 data/secrets/
+node_modules/
 HELP.md
 .gradle
 build/

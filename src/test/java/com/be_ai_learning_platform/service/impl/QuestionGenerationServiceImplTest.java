@@ -1,6 +1,6 @@
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.AI.GeminiStructuredClient;
+import com.be_ai_learning_platform.AI.AiStructuredRouter;
 import com.be_ai_learning_platform.dto.response.GenerateQuestionsResponse;
 import com.be_ai_learning_platform.entity.LearningMaterial;
 import com.be_ai_learning_platform.entity.User;
@@ -8,6 +8,8 @@ import com.be_ai_learning_platform.entity.enums.MaterialStatus;
 import com.be_ai_learning_platform.repository.LearningMaterialRepository;
 import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.SystemSettingsService;
+import com.be_ai_learning_platform.service.mail.MailService;
+import com.be_ai_learning_platform.service.validator.ProgrammingContentValidator;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,8 +32,10 @@ class QuestionGenerationServiceImplTest {
     @Mock private LearningMaterialRepository materialRepo;
     @Mock private UserRepository userRepo;
     @Mock private SystemSettingsService settingsService;
+    @Mock private MailService mailService;
+    @Mock private ProgrammingContentValidator programmingContentValidator;
 
-    private GeminiStructuredClient ai;   // manual mock (flexible)
+    private AiStructuredRouter ai;     // manual mock (flexible)
     private PromptBuilder promptBuilder; // manual mock (flexible)
 
     private User mockUser;
@@ -62,7 +66,7 @@ class QuestionGenerationServiceImplTest {
         });
 
         // AI default: trả JSON hợp lệ
-        ai = mock(GeminiStructuredClient.class, invocation -> {
+        ai = mock(AiStructuredRouter.class, invocation -> {
             if (invocation.getMethod().getReturnType() == String.class) {
                 return buildValidMcqOnlyQuestionsJson(5);
             }
@@ -70,8 +74,11 @@ class QuestionGenerationServiceImplTest {
         });
     }
 
-    private QuestionGenerationServiceImpl newService(GeminiStructuredClient aiClient) {
-        return new QuestionGenerationServiceImpl(materialRepo, userRepo, aiClient, promptBuilder, settingsService);
+    private QuestionGenerationServiceImpl newService(AiStructuredRouter aiRouter) {
+        return new QuestionGenerationServiceImpl(
+                materialRepo, userRepo, aiRouter, promptBuilder,
+                settingsService, programmingContentValidator, mailService
+        );
     }
 
     // ===================== TESTS =====================
@@ -134,13 +141,15 @@ class QuestionGenerationServiceImplTest {
     }
 
     @Test
-    @DisplayName("SERVICE_UNAVAILABLE khi AI dính quota/rate limit (429)")
-    void generate_aiQuotaExceeded_throws503() {
+    @DisplayName("SERVICE_UNAVAILABLE khi AI dính quota/rate limit (429) và gửi mail alert cho Admin")
+    void generate_aiQuotaExceeded_throws503_andSendsAlertMail() {
         // arrange
         when(userRepo.findByEmail(email)).thenReturn(Optional.of(mockUser));
         when(materialRepo.findByIdAndUser(materialId, mockUser)).thenReturn(Optional.of(mockMaterial));
+        when(settingsService.isEmailNotificationEnabled()).thenReturn(true);
+        when(settingsService.getAdminEmails()).thenReturn(new String[]{"admin@example.com"});
 
-        GeminiStructuredClient ai429 = mock(GeminiStructuredClient.class, invocation -> {
+        AiStructuredRouter ai429 = mock(AiStructuredRouter.class, invocation -> {
             if (invocation.getMethod().getReturnType() == String.class) {
                 throw new RuntimeException("Error 429: Resource has exhausted quota");
             }
@@ -155,6 +164,32 @@ class QuestionGenerationServiceImplTest {
 
         // assert
         assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatusCode());
+        verify(mailService).sendAiQuotaAlertMail(anyString());
+    }
+
+    @Test
+    @DisplayName("SERVICE_UNAVAILABLE khi AI quota - mail gửi lỗi không làm crash service")
+    void generate_aiQuotaExceeded_mailFails_stillThrows503() {
+        // arrange
+        when(userRepo.findByEmail(email)).thenReturn(Optional.of(mockUser));
+        when(materialRepo.findByIdAndUser(materialId, mockUser)).thenReturn(Optional.of(mockMaterial));
+
+        doThrow(new RuntimeException("SMTP error")).when(mailService).sendAiQuotaAlertMail(anyString());
+
+        AiStructuredRouter ai429 = mock(AiStructuredRouter.class, invocation -> {
+            if (invocation.getMethod().getReturnType() == String.class) {
+                throw new RuntimeException("Error 429: quota exceeded");
+            }
+            return RETURNS_DEFAULTS.answer(invocation);
+        });
+
+        QuestionGenerationServiceImpl service = newService(ai429);
+
+        // act & assert - mail lỗi không được làm crash, vẫn throw 503
+        ResponseStatusException ex = assertThrows(ResponseStatusException.class,
+                () -> service.generate(email, materialId, 999));
+
+        assertEquals(HttpStatus.SERVICE_UNAVAILABLE, ex.getStatusCode());
     }
 
     @Test
@@ -167,7 +202,7 @@ class QuestionGenerationServiceImplTest {
         AtomicInteger calls = new AtomicInteger(0);
         String validJson = buildValidMcqOnlyQuestionsJson(5);
 
-        GeminiStructuredClient aiRetry = mock(GeminiStructuredClient.class, invocation -> {
+        AiStructuredRouter aiRetry = mock(AiStructuredRouter.class, invocation -> {
             if (invocation.getMethod().getReturnType() == String.class) {
                 int n = calls.incrementAndGet();
                 if (n == 1) throw new RuntimeException("Transient network error");
@@ -186,6 +221,8 @@ class QuestionGenerationServiceImplTest {
         assertNotNull(result.getQuestions());
         assertEquals(5, result.getQuestions().size());
         assertTrue(calls.get() >= 2);
+        // lỗi transient không phải quota => mail alert KHÔNG được gọi
+        verify(mailService, never()).sendAiQuotaAlertMail(anyString());
     }
 
     @Test
@@ -197,7 +234,7 @@ class QuestionGenerationServiceImplTest {
 
         AtomicInteger calls = new AtomicInteger(0);
 
-        GeminiStructuredClient aiBadJson = mock(GeminiStructuredClient.class, invocation -> {
+        AiStructuredRouter aiBadJson = mock(AiStructuredRouter.class, invocation -> {
             if (invocation.getMethod().getReturnType() == String.class) {
                 calls.incrementAndGet();
                 return "{ invalid json";
@@ -214,6 +251,8 @@ class QuestionGenerationServiceImplTest {
         // assert
         assertEquals(HttpStatus.BAD_GATEWAY, ex.getStatusCode());
         assertTrue(calls.get() >= 2, "Parse retry should trigger a second AI call");
+        // JSON sai không phải quota => mail alert KHÔNG được gọi
+        verify(mailService, never()).sendAiQuotaAlertMail(anyString());
     }
 
     // ===================== helpers =====================
