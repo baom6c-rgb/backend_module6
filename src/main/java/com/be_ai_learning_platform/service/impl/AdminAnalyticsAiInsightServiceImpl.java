@@ -1,7 +1,7 @@
 // AdminAnalyticsAiInsightServiceImpl.java
 package com.be_ai_learning_platform.service.impl;
 
-import com.be_ai_learning_platform.AI.GeminiStructuredClient;
+import com.be_ai_learning_platform.AI.AiStructuredRouter;
 import com.be_ai_learning_platform.dto.request.AdminAnalyticsFilterRequest;
 import com.be_ai_learning_platform.dto.response.AdminAnalyticsAiInsightResponse;
 import com.be_ai_learning_platform.dto.response.AtRiskStudentResponse;
@@ -30,7 +30,7 @@ public class AdminAnalyticsAiInsightServiceImpl implements AdminAnalyticsAiInsig
 
     private final AdminAnalyticsService adminAnalyticsService;
     private final AdminAnalyticsRepository analyticsRepository;
-    private final GeminiStructuredClient geminiClient;
+    private final AiStructuredRouter geminiClient;
     private final ObjectMapper objectMapper;
 
     private static final DateTimeFormatter ISO_DT = DateTimeFormatter.ISO_DATE_TIME;

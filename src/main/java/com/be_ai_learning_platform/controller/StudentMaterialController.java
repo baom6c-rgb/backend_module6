@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import com.be_ai_learning_platform.service.validator.ProgrammingContentValidator;
 
 import java.util.Map;
 
@@ -27,6 +28,7 @@ public class StudentMaterialController {
     private final FileExtractService fileExtractService;
     private final UserRepository userRepository;
     private final LearningMaterialRepository learningMaterialRepository;
+    private final ProgrammingContentValidator programmingContentValidator;
 
     @PostMapping("/upload")
     public ResponseEntity<?> upload(
@@ -79,6 +81,7 @@ public class StudentMaterialController {
                         .body("Nội dung quá dài (tối đa " + MAX_TEXT_CHARS + " ký tự). Hãy rút gọn hoặc chia nhỏ nội dung");
             }
             String cleaned = ensureMeaningfulText(raw);
+            cleaned = programmingContentValidator.validateAndNormalize(cleaned);
 
             LearningMaterial material = new LearningMaterial();
             material.setUser(user);
