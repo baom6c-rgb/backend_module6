@@ -256,4 +256,44 @@ public class MailService {
         if (s == null) return "";
         return s.trim();
     }
+
+    // ===================== AI Quota / Rate Limit Alert =====================
+
+    /**
+     * Gửi cảnh báo cho Admin khi AI bị lỗi quota/rate limit.
+     * Admin cần kiểm tra và thay API key AI.
+     *
+     * @param errorDetail chi tiết lỗi từ AI
+     */
+    public void sendAiQuotaAlertMail(String errorDetail) {
+        if (!settingsService.isEmailNotificationEnabled()) return;
+
+        String[] adminEmails = settingsService.getAdminEmails();
+        if (adminEmails.length == 0) return;
+
+        String detail = (errorDetail == null || errorDetail.isBlank()) ? "Không có chi tiết" : errorDetail.trim();
+
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setFrom(fromEmail);
+        message.setTo(adminEmails);
+        message.setSubject("🚨 [Bumblefly AI] Cảnh báo: API Key AI đã hết quota / bị giới hạn");
+
+        message.setText(
+                "Kính gửi Admin,\n\n" +
+                        "Hệ thống Bumblefly AI vừa phát hiện lỗi khi gọi dịch vụ AI do hết quota hoặc vượt quá rate limit.\n\n" +
+                        "===== CHI TIẾT LỖI =====\n" +
+                        detail + "\n\n" +
+                        "===== HÀNH ĐỘNG CẦN THỰC HIỆN =====\n" +
+                        "1. Kiểm tra trạng thái API Key AI hiện tại.\n" +
+                        "2. Thay thế hoặc nạp thêm quota cho API Key.\n" +
+                        "3. Cập nhật API Key mới trong cấu hình hệ thống nếu cần.\n\n" +
+                        "Trong thời gian này, tính năng sinh câu hỏi tự động sẽ không hoạt động.\n\n" +
+                        "Trân trọng,\n" +
+                        "Hệ thống Bumblefly AI\n\n" +
+                        "———\n" +
+                        "Đây là email tự động. Vui lòng không trả lời email này."
+        );
+
+        mailSender.send(message);
+    }
 }

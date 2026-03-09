@@ -12,6 +12,8 @@ import com.be_ai_learning_platform.repository.UserRepository;
 import com.be_ai_learning_platform.service.validator.ProgrammingContentValidator;
 import com.be_ai_learning_platform.service.QuestionGenerationService;
 import com.be_ai_learning_platform.service.SystemSettingsService;
+import com.be_ai_learning_platform.service.mail.MailService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +24,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class QuestionGenerationServiceImpl implements QuestionGenerationService {
@@ -36,12 +39,17 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
     private static final int PARSE_RETRY_TIMES = 1;
     private static final int PARSE_RETRY_TRIMMED_CHARS = 3000;
 
+    /** Cooldown giữa 2 lần gửi mail quota alert: 1 giờ */
+    private static final long QUOTA_ALERT_COOLDOWN_MS = 60 * 60 * 1000L;
+    private final AtomicLong lastQuotaAlertSentAt = new AtomicLong(0);
+
     private final LearningMaterialRepository materialRepo;
     private final UserRepository userRepo;
     private final AiStructuredRouter ai;
     private final PromptBuilder promptBuilder;
     private final SystemSettingsService settingsService;
     private final ProgrammingContentValidator programmingContentValidator;
+    private final MailService mailService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -51,7 +59,8 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
             AiStructuredRouter ai,
             PromptBuilder promptBuilder,
             SystemSettingsService settingsService,
-            ProgrammingContentValidator programmingContentValidator
+            ProgrammingContentValidator programmingContentValidator,
+            MailService mailService
     ) {
         this.materialRepo = materialRepo;
         this.userRepo = userRepo;
@@ -59,6 +68,7 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
         this.promptBuilder = promptBuilder;
         this.settingsService = settingsService;
         this.programmingContentValidator = programmingContentValidator;
+        this.mailService = mailService;
     }
 
     // ===================== PRACTICE / DEFAULT =====================
@@ -288,9 +298,22 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
                 log.error("AI request failed (attempt {}/{}): {}", i + 1, CALL_RETRY_TIMES + 1, msg, e);
 
                 if (isQuotaOrRateLimit(msg)) {
+                    try {
+                        long now = System.currentTimeMillis();
+                        long lastSentAt = lastQuotaAlertSentAt.get();
+                        if (now - lastSentAt > QUOTA_ALERT_COOLDOWN_MS
+                                && lastQuotaAlertSentAt.compareAndSet(lastSentAt, now)) {
+                            mailService.sendAiQuotaAlertMail(extractGeminiMessage(msg));
+                            log.info("AI quota alert email sent to admins.");
+                        } else {
+                            log.info("AI quota alert suppressed (cooldown active).");
+                        }
+                    } catch (Exception mailEx) {
+                        log.warn("Failed to send AI quota alert email: {}", mailEx.getMessage());
+                    }
                     throw new ResponseStatusException(
                             HttpStatus.SERVICE_UNAVAILABLE,
-                            "Dịch vụ AI hiện tạm thời không khả dụng do quota/rate limit: " + msg,
+                            "Dịch vụ AI hiện tạm thời không khả dụng. Vui lòng thử lại sau.",
                             e
                     );
                 }
@@ -402,6 +425,57 @@ public class QuestionGenerationServiceImpl implements QuestionGenerationService 
         }
 
         return null;
+    }
+
+    /**
+     * Tóm tắt lỗi Gemini API thành thông báo ngắn gọn bằng tiếng Việt cho Admin.
+     * Parse JSON để lấy model, quota limit, retry delay nếu có.
+     */
+    private String extractGeminiMessage(String raw) {
+        if (raw == null || raw.isBlank()) return "Lỗi không xác định từ dịch vụ AI.";
+        try {
+            int jsonStart = raw.indexOf("{");
+            if (jsonStart >= 0) {
+                String jsonPart = raw.substring(jsonStart);
+                // Tìm điểm kết thúc JSON hợp lệ (bỏ phần trailing `"` hoặc ký tự thừa)
+                int jsonEnd = jsonPart.lastIndexOf("}");
+                if (jsonEnd >= 0) jsonPart = jsonPart.substring(0, jsonEnd + 1);
+
+                JsonNode root = objectMapper.readTree(jsonPart);
+                JsonNode error = root.path("error");
+
+                // Lấy model từ quotaDimensions
+                String model = "";
+                JsonNode violations = error.path("details");
+                for (JsonNode detail : violations) {
+                    JsonNode dims = detail.path("violations");
+                    for (JsonNode v : dims) {
+                        String m = v.path("quotaDimensions").path("model").asText("");
+                        if (!m.isBlank()) { model = m; break; }
+                    }
+                    if (!model.isBlank()) break;
+                }
+
+                // Lấy retry delay
+                String retryDelay = "";
+                for (JsonNode detail : violations) {
+                    String delay = detail.path("retryDelay").asText("");
+                    if (!delay.isBlank()) { retryDelay = delay; break; }
+                }
+
+                StringBuilder sb = new StringBuilder();
+                sb.append("API Key AI đã hết quota (HTTP 429).\n");
+                if (!model.isBlank()) sb.append("Model: ").append(model).append("\n");
+                if (!retryDelay.isBlank()) sb.append("Thời gian chờ: ").append(retryDelay).append("\n");
+                sb.append("Vui lòng kiểm tra và thay API Key mới trong cấu hình hệ thống.");
+                return sb.toString();
+            }
+        } catch (Exception ignored) {
+            // fallback bên dưới
+        }
+
+        // Fallback: chỉ báo ngắn gọn
+        return "API Key AI đã hết quota (HTTP 429). Vui lòng kiểm tra và thay API Key mới.";
     }
 
     private boolean isQuotaOrRateLimit(String msg) {
