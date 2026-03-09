@@ -1,8 +1,17 @@
 package com.be_ai_learning_platform.service.impl;
 
 import com.be_ai_learning_platform.dto.request.SubmitPracticeRequest;
-import com.be_ai_learning_platform.dto.response.*;
-import com.be_ai_learning_platform.entity.*;
+import com.be_ai_learning_platform.dto.response.AttemptQuestionResponse;
+import com.be_ai_learning_platform.dto.response.AttemptReviewItemResponse;
+import com.be_ai_learning_platform.dto.response.AttemptReviewResponse;
+import com.be_ai_learning_platform.dto.response.StudentAssignedExamItemResponse;
+import com.be_ai_learning_platform.dto.response.StudentStartAssignedExamResponse;
+import com.be_ai_learning_platform.dto.response.SubmitPracticeResponse;
+import com.be_ai_learning_platform.entity.ExamAssignment;
+import com.be_ai_learning_platform.entity.ExamAttempt;
+import com.be_ai_learning_platform.entity.ExamQuestion;
+import com.be_ai_learning_platform.entity.Question;
+import com.be_ai_learning_platform.entity.User;
 import com.be_ai_learning_platform.entity.enums.AssignmentStatus;
 import com.be_ai_learning_platform.entity.enums.ExamResult;
 import com.be_ai_learning_platform.entity.enums.ExamType;
@@ -23,15 +32,30 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.text.Normalizer;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
 public class StudentAssignedExamServiceImpl implements StudentAssignedExamService {
 
     private static final ZoneId VN_ZONE = ZoneId.of("Asia/Ho_Chi_Minh");
+
+    // Chấm điểm giống PracticeServiceImpl
+    private static final int TOTAL_SCORE = 100;
+    private static final int MCQ_TOTAL_POINTS = 70;
+    private static final int ESSAY_TOTAL_POINTS = 30;
 
     private final UserRepository userRepo;
     private final ExamAssignmentRepository assignmentRepo;
@@ -91,7 +115,6 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
                     r.setPassScore(a.getExam().getPassScore());
                     r.setStatus(a.getStatus());
 
-                    // keep VN-local LocalDateTime (already stored as VN by Admin service)
                     r.setOpenAt(a.getOpenAt());
                     r.setDueAt(a.getDueAt());
                     r.setStartedAt(a.getStartedAt());
@@ -124,7 +147,6 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
 
         LocalDateTime now = nowVn();
 
-        // VN compare (avoid server timezone mismatch)
         if (asg.getOpenAt() != null && now.isBefore(asg.getOpenAt())) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Bài kiểm tra chưa mở");
         }
@@ -162,7 +184,9 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
         List<AttemptQuestionResponse> questions = eqs.stream()
                 .map(eq -> {
                     Question q = eq.getQuestion();
-                    if (q == null) return null;
+                    if (q == null) {
+                        return null;
+                    }
 
                     AttemptQuestionResponse r = new AttemptQuestionResponse();
                     r.setQuestionId(q.getId());
@@ -187,15 +211,13 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
         resp.setDurationMinutes(effectiveDuration(asg));
         resp.setPassScore(asg.getExam().getPassScore());
         resp.setStartTime(attempt.getStartTime());
-
-        // Deadline calculated in VN-local LocalDateTime
         resp.setDeadline(attempt.getStartTime().plusMinutes(resp.getDurationMinutes()));
         resp.setQuestions(questions);
         return resp;
     }
 
     // =========================================================
-    // SUBMIT
+    // SUBMIT - chấm giống PracticeServiceImpl (70/30)
     // =========================================================
     @Override
     @Transactional
@@ -220,7 +242,6 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attempt not found"));
 
         int duration = effectiveDuration(asg);
-
         LocalDateTime now = nowVn();
 
         boolean timedOut = attempt.getStartTime() != null
@@ -238,44 +259,56 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
         Map<Long, SubmitPracticeRequest.AnswerItem> answerMap = new HashMap<>();
         if (req != null && req.getAnswers() != null) {
             for (SubmitPracticeRequest.AnswerItem a : req.getAnswers()) {
-                if (a == null || a.getQuestionId() == null) continue;
+                if (a == null || a.getQuestionId() == null) {
+                    continue;
+                }
                 answerMap.put(a.getQuestionId(), a);
             }
         }
 
+        List<Question> questions = eqs.stream()
+                .map(ExamQuestion::getQuestion)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        List<Question> mcqQuestions = questions.stream()
+                .filter(q -> q.getQuestionType() == QuestionType.MCQ)
+                .collect(Collectors.toList());
+
+        List<Question> essayQuestions = questions.stream()
+                .filter(q -> isEssayLikeType(q.getQuestionType()))
+                .collect(Collectors.toList());
+
+        int mcqCount = mcqQuestions.size();
+        int essayCount = essayQuestions.size();
+
+        int mcqBudget = (mcqCount > 0 && essayCount > 0)
+                ? MCQ_TOTAL_POINTS
+                : (mcqCount > 0 ? TOTAL_SCORE : 0);
+
+        int essayBudget = (mcqCount > 0 && essayCount > 0)
+                ? ESSAY_TOTAL_POINTS
+                : (essayCount > 0 ? TOTAL_SCORE : 0);
+
+        Map<Long, Integer> mcqMaxPointsByQid = allocatePointsByQuestionId(mcqQuestions, mcqBudget);
+        Map<Long, Integer> essayMaxPointsByQid = allocatePointsByQuestionId(essayQuestions, essayBudget);
+
         int earnedPoints = 0;
+        int totalPoints = 0;
+
         List<Map<String, Object>> storedAnswers = new ArrayList<>();
         List<AttemptReviewItemResponse> reviewItems = new ArrayList<>();
 
-        long mcqCount = eqs.stream()
-                .map(ExamQuestion::getQuestion)
-                .filter(Objects::nonNull)
-                .filter(q -> q.getQuestionType() == QuestionType.MCQ)
-                .count();
-
-        int mcqPointEach = mcqCount <= 0 ? 0 : (int) Math.floor(100.0 / mcqCount);
-
-        for (ExamQuestion eq : eqs) {
-            Question q = eq.getQuestion();
-            if (q == null) continue;
-
+        for (Question q : questions) {
             SubmitPracticeRequest.AnswerItem ans = answerMap.get(q.getId());
 
             String selected = ans == null ? null : normalizeChoice(ans.getSelectedAnswer());
             String text = ans == null ? null : safeTrim(ans.getTextAnswer(), 5000);
 
-            boolean isCorrect = false;
-            if (q.getQuestionType() == QuestionType.MCQ) {
-                String correct = normalizeChoice(q.getCorrectAnswer());
-                isCorrect = correct != null && correct.equals(selected);
-                if (isCorrect) earnedPoints += mcqPointEach;
-            }
-
-            Map<String, Object> a = new LinkedHashMap<>();
-            a.put("questionId", q.getId());
-            a.put("selectedAnswer", selected);
-            a.put("textAnswer", text);
-            storedAnswers.add(a);
+            Map<String, Object> stored = new LinkedHashMap<>();
+            stored.put("questionId", q.getId());
+            stored.put("selectedAnswer", selected);
+            stored.put("textAnswer", text);
 
             AttemptReviewItemResponse ri = new AttemptReviewItemResponse();
             ri.setQuestionId(q.getId());
@@ -283,25 +316,76 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
             ri.setContent(q.getContent());
 
             if (q.getQuestionType() == QuestionType.MCQ) {
+                int maxScore = Math.max(0, mcqMaxPointsByQid.getOrDefault(q.getId(), 0));
+                totalPoints += maxScore;
+
+                String correct = normalizeChoice(q.getCorrectAnswer());
+                boolean isCorrect = correct != null && correct.equals(selected);
+
+                int score = isCorrect ? maxScore : 0;
+                earnedPoints += score;
+
+                stored.put("earnedScore", score);
+                stored.put("maxScore", maxScore);
+
                 ri.setOptions(parseOptionsMap(q.getOptionsJson()));
                 ri.setCorrectAnswer(q.getCorrectAnswer());
                 ri.setSelectedAnswer(selected);
                 ri.setIsCorrect(isCorrect);
-                ri.setFeedback(q.getAnalysis());
-            } else {
+                ri.setScore(score);
+                ri.setMaxScore(maxScore);
+                ri.setFeedback(isCorrect ? "Đúng" : "Sai");
+            } else if (isEssayLikeType(q.getQuestionType())) {
+                EssayAutoGradeResult essayResult = autoGradeEssay(q, text);
+
+                int maxScore = Math.max(0, essayMaxPointsByQid.getOrDefault(q.getId(), 0));
+                totalPoints += maxScore;
+
+                int score = maxScore <= 0
+                        ? 0
+                        : (int) Math.round((essayResult.score / (double) Math.max(essayResult.maxScore, 1)) * maxScore);
+
+                score = Math.max(0, Math.min(score, maxScore));
+                earnedPoints += score;
+
+                stored.put("earnedScore", score);
+                stored.put("maxScore", maxScore);
+                stored.put("rawEssayScore", essayResult.score);
+                stored.put("rawEssayMaxScore", essayResult.maxScore);
+                stored.put("autoFeedback", essayResult.feedback);
+
                 ri.setOptions(null);
                 ri.setCorrectAnswer(null);
                 ri.setSelectedAnswer(null);
                 ri.setYourAnswer(text);
+                ri.setIsCorrect(maxScore > 0 && score >= maxScore);
+                ri.setScore(score);
+                ri.setMaxScore(maxScore);
+                ri.setFeedback(essayResult.feedback);
+            } else {
+                stored.put("earnedScore", 0);
+                stored.put("maxScore", 0);
+
+                ri.setOptions(null);
+                ri.setCorrectAnswer(null);
+                ri.setSelectedAnswer(selected);
+                ri.setYourAnswer(text);
                 ri.setIsCorrect(null);
-                ri.setFeedback(q.getAnalysis());
+                ri.setScore(0);
+                ri.setMaxScore(0);
+                ri.setFeedback("Loại câu hỏi chưa hỗ trợ auto-grade.");
             }
 
+            storedAnswers.add(stored);
             reviewItems.add(ri);
         }
 
-        int scorePct = Math.max(0, Math.min(100, earnedPoints));
-        ExamResult status = scorePct >= asg.getExam().getPassScore() ? ExamResult.PASSED : ExamResult.FAILED;
+        int scorePct = (int) Math.round((earnedPoints * 100.0) / Math.max(totalPoints, 1));
+        scorePct = Math.max(0, Math.min(100, scorePct));
+
+        ExamResult status = scorePct >= asg.getExam().getPassScore()
+                ? ExamResult.PASSED
+                : ExamResult.FAILED;
 
         attempt.setSubmitTime(now);
         attempt.setScore(scorePct);
@@ -313,22 +397,20 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
 
         try {
             aiFeedback = aiPracticeFeedbackService.generateFeedback(me.getFullName(), scorePct, reviewItems);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         try {
-            List<Question> questions = eqs.stream()
-                    .map(ExamQuestion::getQuestion)
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
-
             String userResultJson = buildStudyGuideInputJson(questions, storedAnswers, scorePct);
             studyGuide = aiStudyGuideService.generateStudyGuide(me.getFullName(), userResultJson);
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
 
         if (studyGuide == null || studyGuide.isBlank()) {
             try {
                 studyGuide = aiStudyGuideService.fallbackStudyGuide(me.getFullName());
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
 
         attempt.setAiFeedback(aiFeedback);
@@ -342,133 +424,18 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
         SubmitPracticeResponse resp = new SubmitPracticeResponse();
         resp.setScore(scorePct);
         resp.setEarnedPoints(earnedPoints);
-        resp.setTotalPoints(100);
+        resp.setTotalPoints(totalPoints);
         resp.setStatus(status);
         resp.setTimedOut(timedOut);
-        resp.setFeedback(buildRuleBasedFeedback(reviewItems));
+        resp.setFeedback(buildRuleBasedFeedback(scorePct));
         resp.setAiFeedback(aiFeedback);
         resp.setStudyGuide(studyGuide);
         return resp;
     }
 
     // =========================================================
-    // helpers
+    // STUDY GUIDE
     // =========================================================
-    private int effectiveDuration(ExamAssignment asg) {
-        Integer o = asg.getDurationMinutesOverride();
-        if (o != null && o > 0) return o;
-
-        Integer d = asg.getExam().getDurationMinutes();
-        if (d != null && d > 0) return d;
-
-        return (int) Math.ceil(settingsService.getMinutesPerQuestion() * 10);
-    }
-
-    private String normalizeChoice(String raw) {
-        if (raw == null) return null;
-        String t = raw.trim().toUpperCase(Locale.ROOT);
-        if (t.startsWith("A")) return "A";
-        if (t.startsWith("B")) return "B";
-        if (t.startsWith("C")) return "C";
-        if (t.startsWith("D")) return "D";
-        return t.isBlank() ? null : t;
-    }
-
-    private String safeTrim(String s, int max) {
-        if (s == null) return null;
-        String t = s.trim();
-        if (t.length() > max) t = t.substring(0, max);
-        return t;
-    }
-
-    private String writeJson(Object obj) {
-        try {
-            return om.writeValueAsString(obj);
-        } catch (JsonProcessingException e) {
-            return "[]";
-        }
-    }
-
-    private String buildStudyGuideInputJson(
-            List<Question> questions,
-            List<? extends Map<String, ?>> storedAnswers,
-            int scorePct
-    ) {
-        List<Map<String, Object>> qs = new ArrayList<>();
-        for (Question q : questions) {
-            if (q == null) continue;
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", q.getId());
-            m.put("type", q.getQuestionType());
-            m.put("question", safeTrim(q.getContent(), 600));
-            m.put("analysis", safeTrim(q.getAnalysis(), 600));
-            m.put("correctAnswer", q.getCorrectAnswer());
-            qs.add(m);
-        }
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("scorePct", scorePct);
-        payload.put("questions", qs);
-        payload.put("answers", storedAnswers);
-
-        return writeJson(payload);
-    }
-
-    private String buildRuleBasedFeedback(List<AttemptReviewItemResponse> items) {
-        long total = items == null ? 0 : items.size();
-        long correct = items == null ? 0 : items.stream()
-                .filter(i -> Boolean.TRUE.equals(i.getIsCorrect()))
-                .count();
-
-        return "Bạn làm đúng " + correct + "/" + total + " câu. Hãy xem lại các câu sai và ôn lại phần kiến thức liên quan.";
-    }
-
-    private Map<String, String> parseOptionsMap(String optionsJson) {
-        if (optionsJson == null || optionsJson.isBlank()) return null;
-
-        String raw = optionsJson.trim();
-        try {
-            if (raw.startsWith("{")) {
-                Map<String, String> m = om.readValue(raw, new TypeReference<Map<String, String>>() {});
-                return (m == null || m.isEmpty()) ? null : normalizeOptionKeys(m);
-            }
-
-            if (raw.startsWith("[")) {
-                List<String> list = om.readValue(raw, new TypeReference<List<String>>() {});
-                if (list == null || list.isEmpty()) return null;
-
-                Map<String, String> m = new LinkedHashMap<>();
-                String[] keys = {"A", "B", "C", "D", "E", "F", "G", "H"};
-                for (int i = 0; i < list.size() && i < keys.length; i++) {
-                    String v = list.get(i);
-                    if (v == null) continue;
-                    String vv = v.trim();
-                    if (vv.isBlank()) continue;
-                    m.put(keys[i], vv);
-                }
-                return m.isEmpty() ? null : m;
-            }
-        } catch (Exception ignored) {}
-
-        Map<String, String> fb = new LinkedHashMap<>();
-        fb.put("A", raw);
-        return fb;
-    }
-
-    private Map<String, String> normalizeOptionKeys(Map<String, String> in) {
-        if (in == null || in.isEmpty()) return in;
-
-        Map<String, String> out = new LinkedHashMap<>();
-        for (Map.Entry<String, String> e : in.entrySet()) {
-            if (e.getKey() == null) continue;
-            String k = e.getKey().trim().toUpperCase(Locale.ROOT);
-            if (!k.isEmpty()) k = String.valueOf(k.charAt(0));
-            String v = e.getValue() == null ? null : e.getValue().trim();
-            if (v == null || v.isBlank()) continue;
-            out.put(k, v);
-        }
-        return out.isEmpty() ? null : out;
-    }
     @Override
     @Transactional(readOnly = true)
     public String getStudyGuide(String email, Long assignmentId) {
@@ -484,10 +451,12 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
         ExamAttempt attempt = attemptRepo.findByIdAndUserId(asg.getAttempt().getId(), me.getId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Attempt not found"));
 
-        // đã generate lúc submit rồi
         return attempt.getStudyGuide();
     }
 
+    // =========================================================
+    // REVIEW
+    // =========================================================
     @Override
     @Transactional(readOnly = true)
     public AttemptReviewResponse getReview(String email, Long assignmentId) {
@@ -517,39 +486,55 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
 
         List<AttemptReviewItemResponse> items = new ArrayList<>();
         int correctCount = 0;
-        int totalMcq = 0;
+        int totalQuestions = 0;
 
         for (ExamQuestion eq : eqs) {
             Question q = eq.getQuestion();
-            if (q == null) continue;
+            if (q == null) {
+                continue;
+            }
+
+            totalQuestions++;
 
             Map<String, Object> ans = answerMap.get(q.getId());
-            String selected = ans == null ? null : normalizeChoice((String) ans.get("selectedAnswer"));
-            String text = ans == null ? null : safeTrim((String) ans.get("textAnswer"), 5000);
+            String selected = normalizeChoice(readString(ans, "selectedAnswer"));
+            String text = safeTrim(readString(ans, "textAnswer"), 5000);
+            Integer score = readInt(ans, "earnedScore");
+            Integer maxScore = readInt(ans, "maxScore");
 
             AttemptReviewItemResponse ri = new AttemptReviewItemResponse();
             ri.setQuestionId(q.getId());
             ri.setQuestionType(q.getQuestionType());
             ri.setContent(q.getContent());
+            ri.setScore(score == null ? 0 : score);
+            ri.setMaxScore(maxScore == null ? 0 : maxScore);
 
             if (q.getQuestionType() == QuestionType.MCQ) {
-                totalMcq++;
                 String correct = normalizeChoice(q.getCorrectAnswer());
                 boolean isCorrect = correct != null && correct.equals(selected);
-                if (isCorrect) correctCount++;
+                if (isCorrect) {
+                    correctCount++;
+                }
 
                 ri.setOptions(parseOptionsMap(q.getOptionsJson()));
                 ri.setCorrectAnswer(q.getCorrectAnswer());
                 ri.setSelectedAnswer(selected);
                 ri.setIsCorrect(isCorrect);
-                ri.setFeedback(q.getAnalysis());
+                ri.setFeedback(readString(ans, "autoFeedback") != null ? readString(ans, "autoFeedback") : (isCorrect ? "Đúng " : "Sai "));
             } else {
                 ri.setOptions(null);
                 ri.setCorrectAnswer(null);
                 ri.setSelectedAnswer(null);
                 ri.setYourAnswer(text);
-                ri.setIsCorrect(null);
-                ri.setFeedback(q.getAnalysis());
+
+                String sampleAnswer = extractSampleAnswer(q.getAnalysis());
+                ri.setSampleAnswer(sampleAnswer);
+
+                boolean isPerfect = (maxScore != null && maxScore > 0) && (score != null && score >= maxScore);
+                ri.setIsCorrect(isPerfect);
+
+                String autoFeedback = safeTrim(readString(ans, "autoFeedback"), 2000);
+                ri.setFeedback(autoFeedback != null ? autoFeedback : q.getAnalysis());
             }
 
             items.add(ri);
@@ -558,13 +543,171 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
         AttemptReviewResponse resp = new AttemptReviewResponse();
         resp.setScore(attempt.getScore());
         resp.setCorrectCount(correctCount);
-        resp.setTotalQuestions(totalMcq); // PracticeReviewDialog dùng cái này
+        resp.setTotalQuestions(totalQuestions);
         resp.setItems(items);
         return resp;
     }
 
+    // =========================================================
+    // HELPERS
+    // =========================================================
+    private int effectiveDuration(ExamAssignment asg) {
+        Integer o = asg.getDurationMinutesOverride();
+        if (o != null && o > 0) {
+            return o;
+        }
+
+        Integer d = asg.getExam().getDurationMinutes();
+        if (d != null && d > 0) {
+            return d;
+        }
+
+        return (int) Math.ceil(settingsService.getMinutesPerQuestion() * 10);
+    }
+
+    private String normalizeChoice(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String t = raw.trim().toUpperCase(Locale.ROOT);
+        if (t.startsWith("A")) return "A";
+        if (t.startsWith("B")) return "B";
+        if (t.startsWith("C")) return "C";
+        if (t.startsWith("D")) return "D";
+        if (t.startsWith("E")) return "E";
+        if (t.startsWith("F")) return "F";
+        if (t.startsWith("G")) return "G";
+        if (t.startsWith("H")) return "H";
+        return t.isBlank() ? null : t;
+    }
+
+    private String safeTrim(String s, int max) {
+        if (s == null) {
+            return null;
+        }
+        String t = s.trim();
+        if (t.length() > max) {
+            t = t.substring(0, max);
+        }
+        return t;
+    }
+
+    private String writeJson(Object obj) {
+        try {
+            return om.writeValueAsString(obj);
+        } catch (JsonProcessingException e) {
+            return "[]";
+        }
+    }
+
+    private String buildStudyGuideInputJson(
+            List<Question> questions,
+            List<? extends Map<String, ?>> storedAnswers,
+            int scorePct
+    ) {
+        List<Map<String, Object>> qs = new ArrayList<>();
+        for (Question q : questions) {
+            if (q == null) {
+                continue;
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", q.getId());
+            m.put("type", q.getQuestionType());
+            m.put("question", safeTrim(q.getContent(), 600));
+            m.put("analysis", safeTrim(q.getAnalysis(), 600));
+            m.put("correctAnswer", q.getCorrectAnswer());
+            qs.add(m);
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("scorePct", scorePct);
+        payload.put("questions", qs);
+        payload.put("answers", storedAnswers);
+
+        return writeJson(payload);
+    }
+
+    private String buildRuleBasedFeedback(int scorePct) {
+        if (scorePct >= 85) {
+            return "Kết quả rất tốt. Bạn nắm khá chắc kiến thức và trình bày ổn.";
+        }
+        if (scorePct >= 70) {
+            return "Kết quả khá tốt. Bạn đã hiểu phần lớn nội dung nhưng vẫn còn vài điểm cần củng cố.";
+        }
+        if (scorePct >= 50) {
+            return "Bạn đã nắm được một phần kiến thức, nhưng cần ôn thêm các ý trọng tâm.";
+        }
+        return "Bạn cần xem lại kiến thức nền tảng và luyện thêm cả câu trắc nghiệm lẫn tự luận.";
+    }
+
+    private Map<String, String> parseOptionsMap(String optionsJson) {
+        if (optionsJson == null || optionsJson.isBlank()) {
+            return null;
+        }
+
+        String raw = optionsJson.trim();
+        try {
+            if (raw.startsWith("{")) {
+                Map<String, String> m = om.readValue(raw, new TypeReference<Map<String, String>>() {});
+                return (m == null || m.isEmpty()) ? null : normalizeOptionKeys(m);
+            }
+
+            if (raw.startsWith("[")) {
+                List<String> list = om.readValue(raw, new TypeReference<List<String>>() {});
+                if (list == null || list.isEmpty()) {
+                    return null;
+                }
+
+                Map<String, String> m = new LinkedHashMap<>();
+                String[] keys = {"A", "B", "C", "D", "E", "F", "G", "H"};
+                for (int i = 0; i < list.size() && i < keys.length; i++) {
+                    String v = list.get(i);
+                    if (v == null) {
+                        continue;
+                    }
+                    String vv = v.trim();
+                    if (vv.isBlank()) {
+                        continue;
+                    }
+                    m.put(keys[i], vv);
+                }
+                return m.isEmpty() ? null : m;
+            }
+        } catch (Exception ignored) {
+        }
+
+        Map<String, String> fb = new LinkedHashMap<>();
+        fb.put("A", raw);
+        return fb;
+    }
+
+    private Map<String, String> normalizeOptionKeys(Map<String, String> in) {
+        if (in == null || in.isEmpty()) {
+            return in;
+        }
+
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : in.entrySet()) {
+            if (e.getKey() == null) {
+                continue;
+            }
+            String k = e.getKey().trim().toUpperCase(Locale.ROOT);
+            if (!k.isEmpty()) {
+                k = String.valueOf(k.charAt(0));
+            }
+            String v = e.getValue() == null ? null : e.getValue().trim();
+            if (v == null || v.isBlank()) {
+                continue;
+            }
+            out.put(k, v);
+        }
+        return out.isEmpty() ? null : out;
+    }
+
     private List<Map<String, Object>> readAnswersJson(String json) {
-        if (json == null || json.isBlank()) return List.of();
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
         try {
             return om.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
         } catch (Exception e) {
@@ -575,13 +718,326 @@ public class StudentAssignedExamServiceImpl implements StudentAssignedExamServic
     private Map<Long, Map<String, Object>> indexByQuestionId(List<Map<String, Object>> list) {
         Map<Long, Map<String, Object>> m = new HashMap<>();
         for (Map<String, Object> a : list) {
-            if (a == null) continue;
+            if (a == null) {
+                continue;
+            }
             Object idObj = a.get("questionId");
-            if (idObj == null) continue;
+            if (idObj == null) {
+                continue;
+            }
+
             Long qid = null;
-            try { qid = Long.valueOf(String.valueOf(idObj)); } catch (Exception ignored) {}
-            if (qid != null) m.put(qid, a);
+            try {
+                qid = Long.valueOf(String.valueOf(idObj));
+            } catch (Exception ignored) {
+            }
+
+            if (qid != null) {
+                m.put(qid, a);
+            }
         }
         return m;
+    }
+
+    private String readString(Map<String, Object> map, String key) {
+        if (map == null || key == null) {
+            return null;
+        }
+        Object val = map.get(key);
+        return val == null ? null : String.valueOf(val);
+    }
+
+    private Integer readInt(Map<String, Object> map, String key) {
+        if (map == null || key == null) {
+            return null;
+        }
+        Object val = map.get(key);
+        if (val == null) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(val));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private boolean isEssayLikeType(QuestionType type) {
+        if (type == null) {
+            return false;
+        }
+        return type == QuestionType.ESSAY || "SHORT_ANSWER".equalsIgnoreCase(type.name());
+    }
+
+    private Map<Long, Integer> allocatePointsByQuestionId(List<Question> questions, int totalPoints) {
+        Map<Long, Integer> map = new HashMap<>();
+        if (questions == null || questions.isEmpty() || totalPoints <= 0) {
+            return map;
+        }
+
+        int count = questions.size();
+        int base = totalPoints / count;
+        int rem = totalPoints % count;
+
+        for (int i = 0; i < count; i++) {
+            int pts = base + (i < rem ? 1 : 0);
+            map.put(questions.get(i).getId(), pts);
+        }
+        return map;
+    }
+
+    private String extractSampleAnswer(String analysisJson) {
+        EssayRubric rubric = parseEssayRubric(analysisJson);
+        return rubric.sampleAnswer;
+    }
+
+    // =========================================================
+    // ESSAY AUTO GRADING
+    // =========================================================
+    private static class EssayRubric {
+        private final String sampleAnswer;
+        private final List<String> keywords;
+        private final int maxScore;
+
+        private EssayRubric(String sampleAnswer, List<String> keywords, int maxScore) {
+            this.sampleAnswer = sampleAnswer;
+            this.keywords = keywords == null ? List.of() : keywords;
+            this.maxScore = Math.max(1, maxScore);
+        }
+    }
+
+    private static class EssayAutoGradeResult {
+        private final int score;
+        private final int maxScore;
+        private final String feedback;
+
+        private EssayAutoGradeResult(int score, int maxScore, String feedback) {
+            this.score = score;
+            this.maxScore = maxScore;
+            this.feedback = feedback;
+        }
+    }
+
+    private EssayRubric parseEssayRubric(String analysisJson) {
+        if (analysisJson == null || analysisJson.isBlank()) {
+            return new EssayRubric(null, List.of(), 10);
+        }
+
+        try {
+            Map<String, Object> m = om.readValue(analysisJson, new TypeReference<Map<String, Object>>() {});
+
+            String sampleAnswer = m.get("sampleAnswer") == null
+                    ? null
+                    : String.valueOf(m.get("sampleAnswer")).trim();
+
+            List<String> keywords = new ArrayList<>();
+            Object keywordsObj = m.get("keywords");
+            if (keywordsObj instanceof List<?> list) {
+                for (Object x : list) {
+                    if (x == null) {
+                        continue;
+                    }
+                    String kw = String.valueOf(x).trim();
+                    if (!kw.isBlank()) {
+                        keywords.add(kw);
+                    }
+                }
+            }
+
+            int maxScore = 10;
+            Object maxScoreObj = m.get("maxScore");
+            if (maxScoreObj != null) {
+                try {
+                    maxScore = Integer.parseInt(String.valueOf(maxScoreObj).trim());
+                } catch (Exception ignored) {
+                }
+            }
+
+            return new EssayRubric(sampleAnswer, keywords, maxScore);
+        } catch (Exception e) {
+            return new EssayRubric(null, List.of(), 10);
+        }
+    }
+
+    private EssayAutoGradeResult autoGradeEssay(Question q, String answerText) {
+        EssayRubric rubric = parseEssayRubric(q.getAnalysis());
+
+        String answer = safeTrim(answerText, 5000);
+        if (answer == null || answer.isBlank()) {
+            return new EssayAutoGradeResult(
+                    0,
+                    rubric.maxScore,
+                    "Chưa có câu trả lời tự luận."
+            );
+        }
+
+        String normalizedAnswer = normalizeText(answer);
+        String normalizedSample = normalizeText(rubric.sampleAnswer);
+
+        double keywordRatio = calcKeywordCoverage(normalizedAnswer, rubric.keywords);
+        double sampleSimilarity = calcSimpleSimilarity(normalizedAnswer, normalizedSample);
+        boolean hasGoodLength = normalizedAnswer.length() >= 20;
+
+        // ✅ Chặn trả lời linh tinh / không đúng ý
+        // quá ngắn hoặc không có keyword nào hoặc quá xa đáp án mẫu => 0 điểm
+        if (!hasGoodLength) {
+            return new EssayAutoGradeResult(
+                    0,
+                    rubric.maxScore,
+                    "Câu trả lời quá ngắn hoặc chưa đủ ý để chấm điểm."
+            );
+        }
+
+        if (keywordRatio <= 0.0 && sampleSimilarity < 0.08) {
+            return new EssayAutoGradeResult(
+                    0,
+                    rubric.maxScore,
+                    "Câu trả lời không đúng trọng tâm hoặc không khớp ý chính của đáp án mẫu."
+            );
+        }
+
+        int keywordScore = (int) Math.round(rubric.maxScore * 0.7 * keywordRatio);
+        int lengthScore = hasGoodLength ? (int) Math.round(rubric.maxScore * 0.2) : 0;
+        int similarityScore = (int) Math.round(rubric.maxScore * 0.1 * sampleSimilarity);
+
+        int totalScore = keywordScore + lengthScore + similarityScore;
+        totalScore = Math.max(0, Math.min(rubric.maxScore, totalScore));
+
+        String feedback = buildEssayFeedback(
+                rubric,
+                keywordRatio,
+                sampleSimilarity,
+                hasGoodLength,
+                totalScore,
+                rubric.maxScore
+        );
+
+        return new EssayAutoGradeResult(totalScore, rubric.maxScore, feedback);
+    }
+
+    private String normalizeText(String s) {
+        if (s == null) {
+            return "";
+        }
+
+        String noAccent = Normalizer.normalize(s, Normalizer.Form.NFD)
+                .replaceAll("\\p{M}+", "");
+
+        return noAccent.toLowerCase(Locale.ROOT)
+                .replaceAll("[\\p{Punct}]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private double calcKeywordCoverage(String normalizedAnswer, List<String> keywords) {
+        if (normalizedAnswer == null || normalizedAnswer.isBlank()) {
+            return 0.0;
+        }
+
+        if (keywords == null || keywords.isEmpty()) {
+            return 0.0;
+        }
+
+        int hit = 0;
+        int total = 0;
+
+        for (String kw : keywords) {
+            if (kw == null || kw.isBlank()) {
+                continue;
+            }
+
+            String normalizedKw = normalizeText(kw);
+            if (normalizedKw.isBlank()) {
+                continue;
+            }
+
+            total++;
+            if (normalizedAnswer.contains(normalizedKw)) {
+                hit++;
+            }
+        }
+
+        if (total == 0) {
+            return 0.6;
+        }
+
+        return Math.max(0.0, Math.min(1.0, (double) hit / total));
+    }
+
+    private double calcSimpleSimilarity(String a, String b) {
+        if (a == null || a.isBlank() || b == null || b.isBlank()) {
+            return 0.0;
+        }
+
+        Set<String> wa = new HashSet<>(Arrays.asList(a.split("\\s+")));
+        Set<String> wb = new HashSet<>(Arrays.asList(b.split("\\s+")));
+
+        wa.removeIf(String::isBlank);
+        wb.removeIf(String::isBlank);
+
+        if (wa.isEmpty() || wb.isEmpty()) {
+            return 0.0;
+        }
+
+        Set<String> inter = new HashSet<>(wa);
+        inter.retainAll(wb);
+
+        Set<String> union = new HashSet<>(wa);
+        union.addAll(wb);
+
+        if (union.isEmpty()) {
+            return 0.0;
+        }
+
+        return (double) inter.size() / union.size();
+    }
+
+    private String buildEssayFeedback(
+            EssayRubric rubric,
+            double keywordRatio,
+            double sampleSimilarity,
+            boolean hasGoodLength,
+            int score,
+            int maxScore
+    ) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Điểm tự động: ").append(score).append("/").append(maxScore).append(". ");
+
+        if (keywordRatio >= 0.8) {
+            sb.append("Câu trả lời bao phủ tốt các ý chính. ");
+        } else if (keywordRatio >= 0.5) {
+            sb.append("Câu trả lời đã có một phần ý chính nhưng còn thiếu một số ý quan trọng. ");
+        } else {
+            sb.append("Câu trả lời còn thiếu nhiều từ khóa hoặc ý chính quan trọng. ");
+        }
+
+        if (hasGoodLength) {
+            sb.append("Độ dài câu trả lời tương đối ổn. ");
+        } else {
+            sb.append("Câu trả lời còn ngắn, nên triển khai ý rõ hơn. ");
+        }
+
+        if (sampleSimilarity >= 0.5) {
+            sb.append("Nội dung khá sát với đáp án mẫu.");
+        } else if (sampleSimilarity >= 0.25) {
+            sb.append("Nội dung có liên quan đến đáp án mẫu nhưng chưa đủ đầy.");
+        } else {
+            sb.append("Nội dung còn khá xa đáp án mẫu.");
+        }
+
+        if (rubric.keywords != null && !rubric.keywords.isEmpty()) {
+            List<String> previewKeywords = rubric.keywords.stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(s -> !s.isBlank())
+                    .limit(5)
+                    .collect(Collectors.toList());
+
+            if (!previewKeywords.isEmpty()) {
+                sb.append(" Từ khóa trọng tâm: ").append(String.join(", ", previewKeywords)).append(".");
+            }
+        }
+
+        return sb.toString().trim();
     }
 }
