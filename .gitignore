@@ -1,5 +1,8 @@
 ### ENV / SECRETS ###
 .env
+.env.docker
+.env.server
+
 *.env
 data/secrets/
 node_modules/
