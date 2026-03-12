@@ -20,10 +20,11 @@ public class CorsFilterConfig {
         CorsConfiguration config = new CorsConfiguration();
 
         config.setAllowCredentials(true);
-        config.setAllowedOrigins(List.of("http://localhost:5175","https://frontend-module6.vercel.app","https://*.vercel.app"));
+        config.setAllowedOriginPatterns(List.of("*")); // dùng patterns thay vì origins
         config.setAllowedHeaders(List.of("*"));
+        config.setExposedHeaders(List.of("*"));
         config.setAllowedMethods(List.of(
-                "GET", "POST", "PUT", "DELETE", "OPTIONS"
+                "GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"
         ));
 
         UrlBasedCorsConfigurationSource source =
