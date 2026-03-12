@@ -52,6 +52,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -775,7 +776,7 @@ public class PracticeServiceImpl implements PracticeService {
 
         PracticeSessionData session = getSessionOrThrow(email, req.getSessionToken());
         if (session.startedAt == null) {
-            session.startedAt = LocalDateTime.now();
+            session.startedAt = LocalDateTime.now(ZoneOffset.UTC);
             session.deadline = session.startedAt.plusMinutes(session.durationMinutes);
             practiceSessionCache.put(sessionKey(email, session.sessionToken), session);
         }
@@ -1188,7 +1189,7 @@ public class PracticeServiceImpl implements PracticeService {
         }
         session.questions = qs;
 
-        session.startedAt = LocalDateTime.now();
+        session.startedAt = LocalDateTime.now(ZoneOffset.UTC);
         session.deadline = session.startedAt.plusMinutes(session.durationMinutes);
 
         practiceSessionCache.put(sessionKey(email, token), session);
