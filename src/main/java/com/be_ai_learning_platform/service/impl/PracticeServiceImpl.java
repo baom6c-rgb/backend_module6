@@ -775,11 +775,9 @@ public class PracticeServiceImpl implements PracticeService {
         }
 
         PracticeSessionData session = getSessionOrThrow(email, req.getSessionToken());
-        if (session.startedAt == null) {
-            session.startedAt = LocalDateTime.now(ZoneOffset.UTC);
-            session.deadline = session.startedAt.plusMinutes(session.durationMinutes);
-            practiceSessionCache.put(sessionKey(email, session.sessionToken), session);
-        }
+        session.startedAt = LocalDateTime.now(ZoneOffset.UTC);
+        session.deadline = session.startedAt.plusMinutes(session.durationMinutes);
+        practiceSessionCache.put(sessionKey(email, session.sessionToken), session);
         return buildSessionResponse(session);
     }
 
